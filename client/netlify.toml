@@ -1,5 +1,5 @@
 [build]
-  command = "npm run build"
+  command = "npm i --no-save --no-audit --no-fund @rollup/rollup-linux-x64-gnu@4.65.0 @esbuild/linux-x64@0.28.2 && npm run build"
   publish = "dist"
 
 [[redirects]]
