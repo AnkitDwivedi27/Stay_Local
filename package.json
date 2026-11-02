@@ -1,0 +1,44 @@
+{
+  "name": "staylocal-monorepo",
+  "version": "0.1.0",
+  "private": true,
+  "description": "StayLocal — Community-led tourism & homestay discovery platform for Uttarakhand, India",
+  "workspaces": [
+    "server",
+    "client"
+  ],
+  "scripts": {
+    "dev": "concurrently -n \"SERVER,CLIENT\" -c \"cyan,magenta\" \"npm run dev:server\" \"npm run dev:client\"",
+    "dev:client": "npm run dev --workspace=client",
+    "dev:server": "npm run dev --workspace=server",
+    "build": "npm run build --workspace=server && npm run build --workspace=client",
+    "build:client": "npm run build --workspace=client",
+    "build:server": "npm run build --workspace=server",
+    "test": "npm run test --workspace=server && npm run test --workspace=client",
+    "test:client": "npm run test --workspace=client",
+    "test:server": "npm run test --workspace=server",
+    "lint": "npm run lint --workspace=server && npm run lint --workspace=client",
+    "lint:client": "npm run lint --workspace=client",
+    "lint:server": "npm run lint --workspace=server",
+    "typecheck": "npm run typecheck --workspace=server && npm run typecheck --workspace=client",
+    "typecheck:client": "npm run typecheck --workspace=client",
+    "typecheck:server": "npm run typecheck --workspace=server",
+    "db:seed": "npm run seed --workspace=server",
+    "db:seed:dry": "npm run seed:dry --workspace=server",
+    "admin:create": "npm run admin:create --workspace=server"
+  },
+  "overrides": {
+    "rollup": "npm:@rollup/wasm-node",
+    "esbuild": "npm:esbuild-wasm@latest"
+  },
+  "devDependencies": {
+    "@rollup/wasm-node": "^4.67.4",
+    "@testing-library/react": "^14.3.1",
+    "concurrently": "^9.1.0",
+    "esbuild-wasm": "^0.28.2",
+    "eslint": "^8.57.1",
+    "happy-dom": "^21.0.4",
+    "mime": "^2.6.0",
+    "typescript": "^5.6.3"
+  }
+}
