@@ -2,12 +2,14 @@ import { app } from './app';
 import { env } from './config/env';
 import { connectDB, disconnectDB } from './config/db';
 import { LocalTreasureService } from './services/local-treasure.service';
+import { autoSeedIfEmpty } from './scripts/seed';
 
 async function bootstrap(): Promise<void> {
   try {
     // Attempt database connection if URI provided
     await connectDB();
     void LocalTreasureService.seedInitialTreasuresIfEmpty();
+    void autoSeedIfEmpty();
 
     const server = app.listen(env.PORT, '0.0.0.0', () => {
       console.log('==================================================');

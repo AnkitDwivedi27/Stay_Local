@@ -119,9 +119,14 @@ export async function runSeed(options: SeedOptions = {}): Promise<SeedSummary> {
           results.stays.skipped += 1;
         }
       } else {
+        const stayPayload = {
+          ...item,
+          isPreloaded: true,
+          assignmentStatus: item.hostId ? 'assigned' : 'unassigned',
+        };
         const res = await StayModel.updateOne(
           { id: item.id.toLowerCase() },
-          { $set: item },
+          { $set: stayPayload },
           { upsert: true, runValidators: true }
         );
         if (res.upsertedCount > 0) {
@@ -200,6 +205,25 @@ export async function runSeed(options: SeedOptions = {}): Promise<SeedSummary> {
   }
 
   return results;
+}
+
+export async function autoSeedIfEmpty(): Promise<void> {
+  if (!isDatabaseConfigured() || !isDatabaseConnected()) return;
+  try {
+    const [destCount, stayCount, expCount] = await Promise.all([
+      DestinationModel.countDocuments(),
+      StayModel.countDocuments(),
+      ExperienceModel.countDocuments(),
+    ]);
+
+    if (destCount === 0 || stayCount === 0 || expCount === 0) {
+      console.log('[Seed] Auto-seeding initial platform dataset (destinations, homestays, experiences)...');
+      await runSeed({ quiet: true });
+      console.log('[Seed] Initial platform dataset seeded successfully.');
+    }
+  } catch (err) {
+    console.warn('[Seed] Note: Could not auto-seed platform data:', err);
+  }
 }
 
 // Standalone CLI execution
