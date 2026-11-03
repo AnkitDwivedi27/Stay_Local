@@ -9,7 +9,7 @@ async function bootstrap(): Promise<void> {
     await connectDB();
     void LocalTreasureService.seedInitialTreasuresIfEmpty();
 
-    const server = app.listen(env.PORT, () => {
+    const server = app.listen(env.PORT, '0.0.0.0', () => {
       console.log('==================================================');
       console.log(`🌲 StayLocal Backend API running in [${env.NODE_ENV}] mode`);
       console.log(`📡 URL: http://localhost:${env.PORT}`);
