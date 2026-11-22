@@ -170,6 +170,11 @@ export class HostListingService {
         maxGuests: input.guestCapacity.maxGuests,
         roomCount: input.guestCapacity.roomCount || 1,
       },
+      totalBeds: input.totalBeds || (input.guestCapacity.roomCount ? input.guestCapacity.roomCount * 2 : input.guestCapacity.maxGuests) || 4,
+      cleaningBufferMinutes: input.cleaningBufferMinutes !== undefined ? input.cleaningBufferMinutes : 60,
+      checkInTimePolicy: input.checkInTimePolicy?.trim() || '12:00 PM',
+      checkOutTimePolicy: input.checkOutTimePolicy?.trim() || '10:00 AM',
+      childOccupancyPolicy: input.childOccupancyPolicy || 'shared_bed_allowed',
       hostId: hostUser.id, // Strictly derived from authenticated session
       amenities: input.amenities || [],
       localSpecialties: input.localSpecialties || [],
@@ -290,6 +295,11 @@ export class HostListingService {
     if (input.publicationStatus !== undefined) {
       stay.publicationStatus = input.publicationStatus;
     }
+    if (input.totalBeds !== undefined) stay.totalBeds = input.totalBeds;
+    if (input.cleaningBufferMinutes !== undefined) stay.cleaningBufferMinutes = input.cleaningBufferMinutes;
+    if (input.checkInTimePolicy !== undefined) stay.checkInTimePolicy = input.checkInTimePolicy.trim();
+    if (input.checkOutTimePolicy !== undefined) stay.checkOutTimePolicy = input.checkOutTimePolicy.trim();
+    if (input.childOccupancyPolicy !== undefined) stay.childOccupancyPolicy = input.childOccupancyPolicy;
 
     await stay.save();
     return toStayRecord(stay);

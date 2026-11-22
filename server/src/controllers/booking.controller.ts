@@ -1,7 +1,29 @@
 import { Request, Response, NextFunction } from 'express';
 import { BookingService } from '../services/booking.service';
+import { AvailabilityService } from '../services/availability.service';
 import { UnauthorizedError } from '../utils/errors';
 import { BookingRecord } from '../types';
+
+export async function checkStayAvailability(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const stayId = req.params.id as string;
+    const checkIn = req.query.checkIn as string;
+    const checkOut = req.query.checkOut as string;
+    const beds = req.query.beds ? parseInt(req.query.beds as string, 10) : 1;
+
+    const result = await AvailabilityService.checkAvailability(stayId, checkIn, checkOut, beds);
+    res.status(200).json({
+      success: true,
+      data: result,
+    });
+  } catch (err) {
+    next(err);
+  }
+}
 
 export async function createBooking(
   req: Request,

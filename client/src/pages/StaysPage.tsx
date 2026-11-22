@@ -19,6 +19,9 @@ export const StaysPage: React.FC = () => {
   const [categoryFilter, setCategoryFilter] = useState('');
   const [verificationFilter, setVerificationFilter] = useState('');
   const [minGuests, setMinGuests] = useState(0);
+  const [checkInDate, setCheckInDate] = useState('');
+  const [checkOutDate, setCheckOutDate] = useState('');
+  const [bedsRequired, setBedsRequired] = useState(1);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [explainerOpen, setExplainerOpen] = useState(false);
@@ -98,6 +101,12 @@ export const StaysPage: React.FC = () => {
         minGuests={minGuests}
         onMinGuestsChange={setMinGuests}
         destinationsList={destinationsList}
+        checkInDate={checkInDate}
+        onCheckInDateChange={setCheckInDate}
+        checkOutDate={checkOutDate}
+        onCheckOutDateChange={setCheckOutDate}
+        bedsRequired={bedsRequired}
+        onBedsRequiredChange={setBedsRequired}
       />
 
       {/* Transparent Counts Counter */}
@@ -175,6 +184,9 @@ export const StaysPage: React.FC = () => {
         stay={selectedStayForBooking}
         isOpen={Boolean(selectedStayForBooking)}
         onClose={() => setSelectedStayForBooking(null)}
+        initialCheckIn={checkInDate ? `${checkInDate}T12:00:00` : undefined}
+        initialCheckOut={checkOutDate ? `${checkOutDate}T10:00:00` : undefined}
+        initialBeds={bedsRequired}
       />
 
       {/* Verification Explainer Modal */}

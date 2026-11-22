@@ -1,9 +1,18 @@
 import { Schema, model, Model, HydratedDocument } from 'mongoose';
 import { BookingRecord, BookingStatus } from '../types';
 
-export interface BookingDoc extends Omit<BookingRecord, 'createdAt' | 'updatedAt' | 'checkIn' | 'checkOut' | 'confirmedAt' | 'cancelledAt' | 'rejectedAt'> {
+export interface BookingDoc extends Omit<BookingRecord, 'createdAt' | 'updatedAt' | 'checkIn' | 'checkOut' | 'confirmedAt' | 'cancelledAt' | 'rejectedAt' | 'expiresAt'> {
   checkIn: Date;
   checkOut: Date;
+  bedsRequired?: number;
+  guestDetails?: {
+    adults: number;
+    children: number;
+    maleGuests?: number;
+    femaleGuests?: number;
+  };
+  cleaningBufferMinutes?: number;
+  expiresAt?: Date;
   confirmedAt?: Date;
   cancelledAt?: Date;
   rejectedAt?: Date;
@@ -106,6 +115,27 @@ const BookingSchema = new Schema<BookingDoc, BookingModelType>(
       required: [true, 'Guest count is required'],
       min: [1, 'Guest count must be at least 1'],
     },
+    bedsRequired: {
+      type: Number,
+      required: [true, 'Beds required is required'],
+      min: [1, 'At least 1 bed is required'],
+      default: 1,
+    },
+    guestDetails: {
+      adults: { type: Number, required: true, default: 1, min: 1 },
+      children: { type: Number, default: 0, min: 0 },
+      maleGuests: { type: Number, min: 0 },
+      femaleGuests: { type: Number, min: 0 },
+    },
+    cleaningBufferMinutes: {
+      type: Number,
+      default: 60,
+      min: 0,
+    },
+    expiresAt: {
+      type: Date,
+      index: true,
+    },
     pricing: {
       type: BookingPriceBreakdownSchema,
       required: true,
@@ -148,10 +178,24 @@ const BookingSchema = new Schema<BookingDoc, BookingModelType>(
         delete record._id;
         delete record.__v;
         if (record.checkIn instanceof Date) {
-          record.checkIn = record.checkIn.toISOString().split('T')[0];
+          record.checkInDateTime = record.checkIn.toISOString();
+          record.checkIn = record.checkIn.toISOString();
         }
         if (record.checkOut instanceof Date) {
-          record.checkOut = record.checkOut.toISOString().split('T')[0];
+          record.checkOutDateTime = record.checkOut.toISOString();
+          record.checkOut = record.checkOut.toISOString();
+        }
+        if (record.expiresAt instanceof Date) {
+          record.expiresAt = record.expiresAt.toISOString();
+        }
+        if (record.bedsRequired === undefined) {
+          record.bedsRequired = record.guestCount || 1;
+        }
+        if (record.guestDetails === undefined) {
+          record.guestDetails = {
+            adults: (record.guestCount as number) || 1,
+            children: 0,
+          };
         }
         return record;
       },

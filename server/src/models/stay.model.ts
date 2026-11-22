@@ -237,6 +237,40 @@ const StaySchema = new Schema<StayDoc>(
       type: GuestCapacitySchema,
       required: false,
     },
+    totalBeds: {
+      type: Number,
+      default: 4,
+      min: 1,
+    },
+    cleaningBufferMinutes: {
+      type: Number,
+      default: 60,
+      min: 0,
+    },
+    checkInTimePolicy: {
+      type: String,
+      default: '12:00 PM',
+      trim: true,
+    },
+    checkOutTimePolicy: {
+      type: String,
+      default: '10:00 AM',
+      trim: true,
+    },
+    childOccupancyPolicy: {
+      type: String,
+      enum: ['shared_bed_allowed', 'requires_bed', 'free_without_bed'],
+      default: 'shared_bed_allowed',
+    },
+    rooms: [
+      {
+        id: { type: String, required: true },
+        name: { type: String, required: true },
+        beds: { type: Number, required: true, min: 1 },
+        maxGuests: { type: Number, required: true, min: 1 },
+        roomType: { type: String, trim: true },
+      },
+    ],
     pricePerNight: {
       type: Number,
       default: 1800,

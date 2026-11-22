@@ -13,29 +13,12 @@ import {
   ForbiddenError,
   ConflictError,
 } from '../utils/errors';
-
-/**
- * Normalizes a YYYY-MM-DD or ISO string into a UTC midnight Date.
- * Ensures consistent multi-timezone date arithmetic and boundaries.
- */
-function parseUtcMidnight(dateStr: string): Date {
-  const dateOnly = dateStr.split('T')[0] || '';
-  const parts = dateOnly.split('-').map(Number);
-  const year = parts[0];
-  const month = parts[1];
-  const day = parts[2];
-  if (
-    year === undefined ||
-    month === undefined ||
-    day === undefined ||
-    isNaN(year) ||
-    isNaN(month) ||
-    isNaN(day)
-  ) {
-    throw new BadRequestError(`Invalid date format: ${dateStr}. Expected YYYY-MM-DD.`);
-  }
-  return new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0));
-}
+import {
+  parseDateTime,
+  getOccupiedBedsForInterval,
+  AvailabilityService,
+} from './availability.service';
+import { realtimeService } from './realtime.service';
 
 /**
  * Calculates authoritative server-side price breakdown according to
@@ -52,11 +35,12 @@ export function calculateBookingPrice(
   checkOut: Date
 ): BookingPriceBreakdown {
   const diffTime = checkOut.getTime() - checkIn.getTime();
-  const nights = Math.round(diffTime / (1000 * 60 * 60 * 24));
-
-  if (nights < 1) {
+  if (diffTime <= 0) {
     throw new BadRequestError('Check-out date must be at least 1 night after check-in date.');
   }
+
+  // Round to nearest full day, minimum 1 night for overnight stays
+  const nights = Math.max(1, Math.round(diffTime / (1000 * 60 * 60 * 24)));
 
   const rate = pricePerNight > 0 ? pricePerNight : 1800;
   const baseAmount = rate * nights;
@@ -91,16 +75,17 @@ function generateBookingReference(): string {
 export class BookingService {
   /**
    * Creates a new booking request by an authenticated tourist.
+   * Performs dynamic time-based interval overlap and bed-level capacity checking.
    */
   static async createBooking(
     user: AuthUser,
     payload: CreateBookingPayload
   ): Promise<BookingRecord> {
-    const checkInDate = parseUtcMidnight(payload.checkIn);
-    const checkOutDate = parseUtcMidnight(payload.checkOut);
+    const checkInDate = parseDateTime(payload.checkIn, 12);
+    const checkOutDate = parseDateTime(payload.checkOut, 10);
 
     if (checkOutDate.getTime() <= checkInDate.getTime()) {
-      throw new BadRequestError('Check-out date must be strictly after check-in date.');
+      throw new BadRequestError('Check-out date/time must be strictly after check-in date/time.');
     }
 
     // 1. Fetch the requested stay
@@ -110,7 +95,6 @@ export class BookingService {
     }
 
     // 2. Enforce Host Assignment & Verification Policy
-    // Unassigned, unverified, unpublished or suspended properties must not accept bookings.
     if (stay.verificationStatus !== 'verified') {
       throw new BadRequestError(
         `This homestay is currently listed with verification status '${stay.verificationStatus}' and cannot accept direct booking reservations. Only verified homestays can be booked.`
@@ -127,25 +111,36 @@ export class BookingService {
       );
     }
 
-    // 3. Enforce guest capacity policy
+    // 3. Process Guest Composition & Bed Requirements
+    const adults = payload.adults ?? payload.guestCount ?? 1;
+    const children = payload.children ?? 0;
+    const totalGuests = adults + children;
+    const bedsRequired = payload.bedsRequired ?? totalGuests;
+
+    // Enforce overall max capacity
     const maxCapacity = stay.guestCapacity?.maxGuests || 4;
-    if (payload.guestCount > maxCapacity) {
+    if (totalGuests > maxCapacity) {
       throw new BadRequestError(
-        `Guest count (${payload.guestCount}) exceeds maximum capacity of ${maxCapacity} guests for '${stay.name}'.`
+        `Guest count (${totalGuests}) exceeds maximum capacity of ${maxCapacity} guests for '${stay.name}'.`
       );
     }
 
-    // 4. Overlap Check: Prevent booking against any confirmed reservation
-    const hasOverlap = await BookingModel.findOne({
-      stayId: stay.id,
-      status: 'confirmed',
-      checkIn: { $lt: checkOutDate },
-      checkOut: { $gt: checkInDate },
-    });
+    // 4. Dynamic Bed Availability & Cleaning Buffer Check
+    const totalBeds = AvailabilityService.getStayTotalBeds(stay);
+    const cleaningBufferMinutes = AvailabilityService.getStayCleaningBuffer(stay);
 
-    if (hasOverlap) {
+    const occupiedBeds = await getOccupiedBedsForInterval(
+      stay.id,
+      checkInDate,
+      checkOutDate,
+      cleaningBufferMinutes
+    );
+
+    const availableBeds = Math.max(0, totalBeds - occupiedBeds);
+
+    if (bedsRequired > availableBeds) {
       throw new ConflictError(
-        'The selected dates overlap with an existing confirmed reservation for this homestay. Please choose alternative dates.'
+        `Cannot reserve ${bedsRequired} bed(s). Only ${availableBeds} of ${totalBeds} bed(s) are available for the requested time window (taking into account active reservations and the ${cleaningBufferMinutes}-minute preparation buffer).`
       );
     }
 
@@ -163,6 +158,9 @@ export class BookingService {
       refExists = await BookingModel.findOne({ bookingReference });
     }
 
+    // Pending reservations hold inventory for 30 minutes before expiring
+    const expiresAt = new Date(Date.now() + 30 * 60 * 1000);
+
     const booking = new BookingModel({
       id: internalId,
       bookingReference,
@@ -177,13 +175,26 @@ export class BookingService {
       hostId: stay.hostId,
       checkIn: checkInDate,
       checkOut: checkOutDate,
-      guestCount: payload.guestCount,
+      guestCount: totalGuests,
+      bedsRequired,
+      guestDetails: {
+        adults,
+        children,
+        maleGuests: payload.maleGuests,
+        femaleGuests: payload.femaleGuests,
+      },
+      cleaningBufferMinutes,
+      expiresAt,
       pricing,
       status: 'pending',
       specialRequests: payload.specialRequests,
     });
 
     await booking.save();
+
+    // 7. Broadcast real-time availability update
+    realtimeService.broadcastAvailabilityChange(stay.id);
+
     return booking.toJSON() as unknown as BookingRecord;
   }
 
@@ -210,7 +221,6 @@ export class BookingService {
     const isAdmin = user.role === 'admin';
 
     if (!isTouristOwner && !isHostOwner && !isAdmin) {
-      // Also check if the user is registered as host of the stay if hostId wasn't initially copied
       const stay = await StayModel.findOne({ id: booking.stayId });
       const isStayHost = stay && stay.hostId === user.id;
 
@@ -224,7 +234,7 @@ export class BookingService {
 
   /**
    * Cancels a booking reservation by authorized participant (tourist, host, or admin).
-   * Releases reserved dates immediately.
+   * Releases reserved beds immediately and broadcasts real-time update.
    */
   static async cancelBooking(
     user: AuthUser,
@@ -261,6 +271,9 @@ export class BookingService {
     booking.cancelledAt = new Date();
     booking.cancellationReason = reason || (isTouristOwner ? 'Cancelled by tourist' : 'Cancelled by host/admin');
     await booking.save();
+
+    // Broadcast inventory release
+    realtimeService.broadcastAvailabilityChange(booking.stayId);
 
     return booking.toJSON() as unknown as BookingRecord;
   }
@@ -365,18 +378,22 @@ export class BookingService {
       }
       lockAcquired = true;
 
-      // Concurrency Check: Check for overlapping confirmed reservations under lock
-      const conflict = await BookingModel.findOne({
-        stayId: booking.stayId,
-        id: { $ne: booking.id },
-        status: 'confirmed',
-        checkIn: { $lt: booking.checkOut },
-        checkOut: { $gt: booking.checkIn },
-      });
+      // Concurrency & Bed Capacity Check: Check for overlapping occupied beds under lock
+      const totalBeds = AvailabilityService.getStayTotalBeds(stay);
+      const cleaningBufferMinutes = AvailabilityService.getStayCleaningBuffer(stay);
 
-      if (conflict) {
+      const occupiedBeds = await getOccupiedBedsForInterval(
+        stay.id,
+        booking.checkIn,
+        booking.checkOut,
+        cleaningBufferMinutes,
+        booking.id // exclude this booking itself from occupied count
+      );
+
+      const required = booking.bedsRequired || booking.guestCount || 1;
+      if (occupiedBeds + required > totalBeds) {
         throw new ConflictError(
-          `Cannot confirm booking: conflicting dates overlap with existing confirmed reservation '${conflict.bookingReference}'.`
+          `Cannot confirm booking: confirming ${required} bed(s) would exceed total bed capacity of ${totalBeds} (currently ${occupiedBeds} bed(s) occupied during this interval).`
         );
       }
 
@@ -391,6 +408,9 @@ export class BookingService {
             status: 'confirmed',
             confirmedAt: new Date(),
           },
+          $unset: {
+            expiresAt: 1, // Remove pending reservation expiry
+          },
         },
         { new: true }
       );
@@ -400,6 +420,9 @@ export class BookingService {
           'Concurrent modification conflict: this booking status was changed by another operation.'
         );
       }
+
+      // Broadcast real-time update
+      realtimeService.broadcastAvailabilityChange(booking.stayId);
 
       return confirmedBooking.toJSON() as unknown as BookingRecord;
     } finally {
@@ -418,7 +441,7 @@ export class BookingService {
 
   /**
    * Host rejects a pending booking request.
-   * Releases any dates held for review.
+   * Releases reserved beds immediately and broadcasts real-time update.
    */
   static async rejectBooking(
     hostUser: AuthUser,
@@ -453,6 +476,9 @@ export class BookingService {
     booking.rejectedAt = new Date();
     booking.cancellationReason = reason || 'Declined by host';
     await booking.save();
+
+    // Broadcast inventory release
+    realtimeService.broadcastAvailabilityChange(booking.stayId);
 
     return booking.toJSON() as unknown as BookingRecord;
   }

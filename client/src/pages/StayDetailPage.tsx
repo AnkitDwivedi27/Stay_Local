@@ -15,8 +15,11 @@ import {
   HeartHandshake,
   CheckCircle2,
   Info,
+  Bed,
+  Clock,
+  RefreshCw,
 } from 'lucide-react';
-import { AccommodationRecord } from '../types';
+import { AccommodationRecord, AvailabilityCheckResponse } from '../types';
 import { apiService } from '../services/api';
 import { VerificationBadge } from '../components/ui/Badge';
 import { BookingModal } from '../components/booking/BookingModal';
@@ -39,6 +42,53 @@ export const StayDetailPage: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [bookingModalOpen, setBookingModalOpen] = useState(false);
   const [explainerOpen, setExplainerOpen] = useState(false);
+
+  // Time-based Availability Widget State
+  const tomorrowStr = new Date(Date.now() + 86400000).toISOString().split('T')[0];
+  const threeDaysStr = new Date(Date.now() + 3 * 86400000).toISOString().split('T')[0];
+  const [widgetCheckInDate, setWidgetCheckInDate] = useState(tomorrowStr);
+  const [widgetCheckInTime, setWidgetCheckInTime] = useState('12:00');
+  const [widgetCheckOutDate, setWidgetCheckOutDate] = useState(threeDaysStr);
+  const [widgetCheckOutTime, setWidgetCheckOutTime] = useState('10:00');
+  const [widgetBeds, setWidgetBeds] = useState(1);
+  const [availability, setAvailability] = useState<AvailabilityCheckResponse | null>(null);
+  const [checkingAvailability, setCheckingAvailability] = useState(false);
+
+  const fetchLiveAvailability = useCallback(async () => {
+    if (!id || !widgetCheckInDate || !widgetCheckOutDate) return;
+    try {
+      setCheckingAvailability(true);
+      const inIso = new Date(`${widgetCheckInDate}T${widgetCheckInTime}:00`).toISOString();
+      const outIso = new Date(`${widgetCheckOutDate}T${widgetCheckOutTime}:00`).toISOString();
+      const data = await apiService.checkStayAvailability(id, {
+        checkIn: inIso,
+        checkOut: outIso,
+        beds: widgetBeds,
+      });
+      setAvailability(data);
+    } catch {
+      // fallback silent
+    } finally {
+      setCheckingAvailability(false);
+    }
+  }, [id, widgetCheckInDate, widgetCheckInTime, widgetCheckOutDate, widgetCheckOutTime, widgetBeds]);
+
+  useEffect(() => {
+    if (stay) {
+      fetchLiveAvailability();
+    }
+  }, [stay, fetchLiveAvailability]);
+
+  // Real-time subscription to SSE
+  useEffect(() => {
+    if (!id) return;
+    const unsubscribe = apiService.subscribeStayAvailability(id, () => {
+      fetchLiveAvailability();
+    });
+    return () => {
+      unsubscribe();
+    };
+  }, [id, fetchLiveAvailability]);
 
   const fetchStay = useCallback(async () => {
     if (!id) return;
@@ -172,26 +222,61 @@ export const StayDetailPage: React.FC = () => {
           </div>
 
           {/* Quick Specifications */}
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 p-4 rounded-2xl bg-sand-50 border border-sand-200">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 p-4 rounded-2xl bg-sand-50 border border-sand-200">
             <div className="space-y-1">
               <span className="text-[10px] uppercase font-bold text-charcoal-400 block tracking-wider">Capacity</span>
-              <div className="flex items-center gap-1.5 text-sm font-semibold text-charcoal-800">
+              <div className="flex items-center gap-1.5 text-xs font-semibold text-charcoal-800">
                 <Users className="w-4 h-4 text-forest-700" />
                 <span>Up to {maxGuests} guests</span>
               </div>
             </div>
             <div className="space-y-1">
+              <span className="text-[10px] uppercase font-bold text-charcoal-400 block tracking-wider">Total Beds</span>
+              <div className="flex items-center gap-1.5 text-xs font-semibold text-charcoal-800">
+                <Bed className="w-4 h-4 text-forest-700" />
+                <span>{stay.totalBeds || (stay.guestCapacity?.roomCount ? stay.guestCapacity.roomCount * 2 : 4)} beds</span>
+              </div>
+            </div>
+            <div className="space-y-1">
               <span className="text-[10px] uppercase font-bold text-charcoal-400 block tracking-wider">Guest Rooms</span>
-              <div className="flex items-center gap-1.5 text-sm font-semibold text-charcoal-800">
+              <div className="flex items-center gap-1.5 text-xs font-semibold text-charcoal-800">
                 <Home className="w-4 h-4 text-forest-700" />
                 <span>{roomCount} {roomCount === 1 ? 'room' : 'rooms'}</span>
               </div>
             </div>
             <div className="space-y-1">
-              <span className="text-[10px] uppercase font-bold text-charcoal-400 block tracking-wider">District</span>
-              <div className="flex items-center gap-1.5 text-sm font-semibold text-charcoal-800">
-                <MapPin className="w-4 h-4 text-forest-700" />
-                <span>{stay.district}</span>
+              <span className="text-[10px] uppercase font-bold text-charcoal-400 block tracking-wider">Cleaning Buffer</span>
+              <div className="flex items-center gap-1.5 text-xs font-semibold text-charcoal-800">
+                <Clock className="w-4 h-4 text-forest-700" />
+                <span>{stay.cleaningBufferMinutes ?? 60}m prep time</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Time & Child Policies */}
+          <div className="p-4 rounded-2xl bg-sand-100/60 border border-sand-200 space-y-2 text-xs">
+            <div className="font-semibold text-forest-900 uppercase tracking-wider text-[11px] flex items-center gap-1.5">
+              <Clock className="w-3.5 h-3.5 text-forest-700" />
+              <span>Host Scheduling & Turnover Policies</span>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-charcoal-700 pt-1">
+              <div>
+                <span className="text-charcoal-500 block text-[10px] uppercase">Standard Check-in</span>
+                <span className="font-medium">{stay.checkInTimePolicy || '12:00 PM'} IST</span>
+              </div>
+              <div>
+                <span className="text-charcoal-500 block text-[10px] uppercase">Standard Check-out</span>
+                <span className="font-medium">{stay.checkOutTimePolicy || '10:00 AM'} IST</span>
+              </div>
+              <div>
+                <span className="text-charcoal-500 block text-[10px] uppercase">Child Policy</span>
+                <span className="font-medium">
+                  {stay.childOccupancyPolicy === 'requires_bed'
+                    ? 'Separate bed required'
+                    : stay.childOccupancyPolicy === 'free_without_bed'
+                    ? 'Infants stay free'
+                    : 'Children may share bed'}
+                </span>
               </div>
             </div>
           </div>
@@ -304,6 +389,86 @@ export const StayDetailPage: React.FC = () => {
                   </p>
                 </div>
 
+                {/* Live Bed Availability Widget */}
+                <div className="p-4 rounded-2xl bg-sand-50/80 border border-sand-200 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold uppercase tracking-wider text-charcoal-800 flex items-center gap-1.5">
+                      <Bed className="w-4 h-4 text-forest-700" />
+                      Live Bed Availability
+                    </span>
+                    {checkingAvailability && (
+                      <span className="text-[11px] text-forest-700 flex items-center gap-1">
+                        <RefreshCw className="w-3 h-3 animate-spin" />
+                        Syncing
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2 text-xs">
+                    <div>
+                      <label className="text-[10px] uppercase font-semibold text-charcoal-500 block mb-0.5">Check-in</label>
+                      <div className="flex gap-1">
+                        <input
+                          type="date"
+                          value={widgetCheckInDate}
+                          onChange={(e) => setWidgetCheckInDate(e.target.value)}
+                          className="w-full px-2 py-1.5 border border-sand-300 rounded-lg text-xs"
+                        />
+                        <input
+                          type="time"
+                          value={widgetCheckInTime}
+                          onChange={(e) => setWidgetCheckInTime(e.target.value)}
+                          className="w-16 px-1 py-1.5 border border-sand-300 rounded-lg text-[11px]"
+                        />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="text-[10px] uppercase font-semibold text-charcoal-500 block mb-0.5">Check-out</label>
+                      <div className="flex gap-1">
+                        <input
+                          type="date"
+                          min={widgetCheckInDate}
+                          value={widgetCheckOutDate}
+                          onChange={(e) => setWidgetCheckOutDate(e.target.value)}
+                          className="w-full px-2 py-1.5 border border-sand-300 rounded-lg text-xs"
+                        />
+                        <input
+                          type="time"
+                          value={widgetCheckOutTime}
+                          onChange={(e) => setWidgetCheckOutTime(e.target.value)}
+                          className="w-16 px-1 py-1.5 border border-sand-300 rounded-lg text-[11px]"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between text-xs pt-1">
+                    <span className="text-charcoal-600 font-medium">Desired Beds:</span>
+                    <select
+                      value={widgetBeds}
+                      onChange={(e) => setWidgetBeds(parseInt(e.target.value, 10))}
+                      className="px-2 py-1 border border-sand-300 rounded-lg text-xs font-bold text-forest-900 bg-white"
+                    >
+                      {Array.from({ length: stay.totalBeds || (stay.guestCapacity?.roomCount ? stay.guestCapacity.roomCount * 2 : 4) }, (_, i) => i + 1).map((b) => (
+                        <option key={b} value={b}>{b} {b === 1 ? 'Bed' : 'Beds'}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {availability && (
+                    <div className={`p-2.5 rounded-xl text-xs flex items-center justify-between ${availability.isAvailable ? 'bg-emerald-100/70 text-emerald-900 border border-emerald-300' : 'bg-rose-50 text-rose-800 border border-rose-200'}`}>
+                      <span className="font-semibold">
+                        {availability.isAvailable
+                          ? `🟢 ${availability.availableBeds} of ${availability.totalBeds} Beds Free`
+                          : `🔴 Only ${availability.availableBeds} Bed(s) Free`}
+                      </span>
+                      <span className="text-[10px] text-charcoal-500">
+                        {availability.cleaningBufferMinutes}m turnover
+                      </span>
+                    </div>
+                  )}
+                </div>
+
                 <Button
                   variant="primary"
                   size="lg"
@@ -390,6 +555,9 @@ export const StayDetailPage: React.FC = () => {
         stay={stay}
         isOpen={bookingModalOpen}
         onClose={() => setBookingModalOpen(false)}
+        initialCheckIn={`${widgetCheckInDate}T${widgetCheckInTime}:00`}
+        initialCheckOut={`${widgetCheckOutDate}T${widgetCheckOutTime}:00`}
+        initialBeds={widgetBeds}
       />
 
       {/* Verification Explainer Modal */}

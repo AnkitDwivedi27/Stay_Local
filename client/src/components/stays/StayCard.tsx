@@ -12,6 +12,8 @@ import {
   ChevronDown,
   ChevronUp,
   ArrowRight,
+  Bed,
+  Clock,
 } from 'lucide-react';
 import { AccommodationRecord } from '../../types';
 import { Card } from '../ui/Card';
@@ -108,19 +110,26 @@ export const StayCard: React.FC<StayCardProps> = ({ stay, onOpenExplainer, onBoo
           </div>
         )}
 
-        {/* Capacity & Honest Status Notice */}
+        {/* Capacity, Bed Inventory & Honest Status Notice */}
         <div className="space-y-2.5 pt-2 border-t border-sand-200">
-          {stay.guestCapacity && (
-            <div className="flex items-center gap-2 text-xs text-charcoal-600">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-charcoal-600">
+            {stay.guestCapacity && (
               <span className="flex items-center gap-1 font-medium">
                 <Users className="w-3.5 h-3.5 text-forest-700" />
                 Up to {stay.guestCapacity.maxGuests || 4} guests
               </span>
-              {stay.guestCapacity.roomCount && (
-                <span className="text-charcoal-400">· {stay.guestCapacity.roomCount} guest rooms</span>
-              )}
-            </div>
-          )}
+            )}
+            <span className="flex items-center gap-1 font-semibold text-forest-800">
+              <Bed className="w-3.5 h-3.5 text-forest-600" />
+              {stay.totalBeds || (stay.guestCapacity?.roomCount ? stay.guestCapacity.roomCount * 2 : (stay.guestCapacity?.maxGuests || 4))} beds
+            </span>
+            {stay.cleaningBufferMinutes !== undefined && (
+              <span className="flex items-center gap-1 text-[11px] text-charcoal-500">
+                <Clock className="w-3 h-3 text-charcoal-400" />
+                {stay.cleaningBufferMinutes}m prep buffer
+              </span>
+            )}
+          </div>
 
           {/* Pricing & Booking Ethics notice */}
           {isVerified ? (

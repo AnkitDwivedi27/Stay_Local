@@ -15,6 +15,7 @@ import {
   ShieldCheck,
   Ban,
   Home,
+  Bed,
 } from 'lucide-react';
 import { DestinationGuidesSection } from '../components/booking/DestinationGuidesSection';
 import { DestinationTreasuresSection } from '../components/booking/DestinationTreasuresSection';
@@ -73,6 +74,23 @@ export const MyBookingsPage: React.FC = () => {
       setActionError(err instanceof Error ? err.message : 'Unable to cancel booking');
     } finally {
       setCancellingId(null);
+    }
+  };
+
+  const formatIST = (isoStr: string) => {
+    try {
+      const d = new Date(isoStr);
+      return new Intl.DateTimeFormat('en-IN', {
+        timeZone: 'Asia/Kolkata',
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: true,
+      }).format(d);
+    } catch {
+      return isoStr;
     }
   };
 
@@ -271,10 +289,10 @@ export const MyBookingsPage: React.FC = () => {
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
                     <div className="p-3.5 rounded-xl bg-sand-50/80 border border-sand-200/90">
                       <span className="text-charcoal-500 uppercase font-bold text-[10px] tracking-wider block mb-1">
-                        Reservation Dates
+                        Schedule (IST)
                       </span>
                       <div className="font-semibold text-charcoal-900 text-xs sm:text-sm">
-                        {booking.checkIn} → {booking.checkOut}
+                        {formatIST(booking.checkIn)} → {formatIST(booking.checkOut)}
                       </div>
                       <div className="text-charcoal-500 mt-0.5 text-[11px]">
                         {booking.pricing.nights} {booking.pricing.nights === 1 ? 'night' : 'nights'} stay
@@ -283,14 +301,18 @@ export const MyBookingsPage: React.FC = () => {
 
                     <div className="p-3.5 rounded-xl bg-sand-50/80 border border-sand-200/90">
                       <span className="text-charcoal-500 uppercase font-bold text-[10px] tracking-wider block mb-1">
-                        Travelers
+                        Travelers & Bed Inventory
                       </span>
                       <div className="font-semibold text-charcoal-900 flex items-center gap-1.5 text-xs sm:text-sm">
                         <Users className="w-4 h-4 text-forest-700" />
-                        <span>{booking.guestCount} Guests</span>
+                        <span>
+                          {booking.guestDetails?.adults || booking.guestCount} Adults
+                          {booking.guestDetails?.children ? `, ${booking.guestDetails.children} Children` : ''}
+                        </span>
                       </div>
-                      <div className="text-charcoal-500 mt-0.5 text-[11px]">
-                        Direct host hospitality
+                      <div className="text-forest-800 font-bold mt-1 text-[11px] flex items-center gap-1">
+                        <Bed className="w-3.5 h-3.5 text-forest-700" />
+                        <span>{booking.bedsRequired || booking.guestCount} Bed(s) Allocated</span>
                       </div>
                     </div>
 

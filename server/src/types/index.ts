@@ -102,6 +102,16 @@ export interface VerificationHistoryItem {
   timestamp: string; // ISO date string
 }
 
+export type ChildOccupancyPolicy = 'shared_bed_allowed' | 'requires_bed' | 'free_without_bed';
+
+export interface HomestayRoom {
+  id: string;
+  name: string;
+  beds: number;
+  maxGuests: number;
+  roomType?: string;
+}
+
 export interface AccommodationRecord {
   id: string;
   name: string;
@@ -125,6 +135,12 @@ export interface AccommodationRecord {
     maxGuests?: number;
     roomCount?: number;
   };
+  totalBeds?: number;
+  cleaningBufferMinutes?: number;
+  checkInTimePolicy?: string;
+  checkOutTimePolicy?: string;
+  childOccupancyPolicy?: ChildOccupancyPolicy;
+  rooms?: HomestayRoom[];
   pricePerNight?: number;
   hostId?: string;
   isPreloaded?: boolean;
@@ -339,6 +355,13 @@ export interface BookingPriceBreakdown {
   currency: 'INR';
 }
 
+export interface GuestDetails {
+  adults: number;
+  children: number;
+  maleGuests?: number;
+  femaleGuests?: number;
+}
+
 export interface BookingRecord {
   id: string; // Internal booking ID (e.g. bk_...)
   bookingReference: string; // Unique human-readable code (e.g. SLB-7K9F2Q)
@@ -351,9 +374,15 @@ export interface BookingRecord {
   stayLocality: string;
   stayDistrict: string;
   hostId?: string;
-  checkIn: string; // ISO date string YYYY-MM-DD
-  checkOut: string; // ISO date string YYYY-MM-DD
+  checkIn: string; // ISO string or YYYY-MM-DD
+  checkOut: string; // ISO string or YYYY-MM-DD
+  checkInDateTime?: string; // Full ISO 8601 UTC timestamp
+  checkOutDateTime?: string; // Full ISO 8601 UTC timestamp
   guestCount: number;
+  bedsRequired?: number;
+  guestDetails?: GuestDetails;
+  cleaningBufferMinutes?: number;
+  expiresAt?: string;
   pricing: BookingPriceBreakdown;
   status: BookingStatus;
   specialRequests?: string;
@@ -367,10 +396,27 @@ export interface BookingRecord {
 
 export interface CreateBookingPayload {
   stayId: string;
+  checkIn: string; // ISO date-time or date
+  checkOut: string; // ISO date-time or date
+  guestCount?: number;
+  adults?: number;
+  children?: number;
+  maleGuests?: number;
+  femaleGuests?: number;
+  bedsRequired?: number;
+  specialRequests?: string;
+}
+
+export interface AvailabilityCheckResponse {
+  stayId: string;
   checkIn: string;
   checkOut: string;
-  guestCount: number;
-  specialRequests?: string;
+  totalBeds: number;
+  occupiedBeds: number;
+  availableBeds: number;
+  cleaningBufferMinutes: number;
+  isAvailable: boolean;
+  requestedBeds?: number;
 }
 
 export interface BookingResponse {

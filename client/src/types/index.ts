@@ -102,6 +102,16 @@ export interface VerificationHistoryItem {
   timestamp: string;
 }
 
+export type ChildOccupancyPolicy = 'shared_bed_allowed' | 'requires_bed' | 'free_without_bed';
+
+export interface HomestayRoom {
+  id: string;
+  name: string;
+  beds: number;
+  maxGuests: number;
+  roomType?: string;
+}
+
 export interface AccommodationRecord {
   id: string;
   name: string;
@@ -125,6 +135,12 @@ export interface AccommodationRecord {
     maxGuests?: number;
     roomCount?: number;
   };
+  totalBeds?: number;
+  cleaningBufferMinutes?: number;
+  checkInTimePolicy?: string;
+  checkOutTimePolicy?: string;
+  childOccupancyPolicy?: ChildOccupancyPolicy;
+  rooms?: HomestayRoom[];
   pricePerNight?: number;
   hostId?: string;
   isPreloaded?: boolean;
@@ -319,6 +335,13 @@ export interface BookingPriceBreakdown {
   currency: 'INR';
 }
 
+export interface GuestDetails {
+  adults: number;
+  children: number;
+  maleGuests?: number;
+  femaleGuests?: number;
+}
+
 export interface BookingRecord {
   id: string;
   bookingReference: string;
@@ -333,7 +356,13 @@ export interface BookingRecord {
   hostId?: string;
   checkIn: string;
   checkOut: string;
+  checkInDateTime?: string;
+  checkOutDateTime?: string;
   guestCount: number;
+  bedsRequired?: number;
+  guestDetails?: GuestDetails;
+  cleaningBufferMinutes?: number;
+  expiresAt?: string;
   pricing: BookingPriceBreakdown;
   status: BookingStatus;
   specialRequests?: string;
@@ -349,8 +378,25 @@ export interface CreateBookingPayload {
   stayId: string;
   checkIn: string;
   checkOut: string;
-  guestCount: number;
+  guestCount?: number;
+  adults?: number;
+  children?: number;
+  maleGuests?: number;
+  femaleGuests?: number;
+  bedsRequired?: number;
   specialRequests?: string;
+}
+
+export interface AvailabilityCheckResponse {
+  stayId: string;
+  checkIn: string;
+  checkOut: string;
+  totalBeds: number;
+  occupiedBeds: number;
+  availableBeds: number;
+  cleaningBufferMinutes: number;
+  isAvailable: boolean;
+  requestedBeds?: number;
 }
 
 export interface BookingResponse {

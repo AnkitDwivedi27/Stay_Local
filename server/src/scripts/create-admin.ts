@@ -2,7 +2,7 @@ import readline from 'readline';
 import { connectDB, disconnectDB, isDatabaseConfigured, isDatabaseConnected } from '../config/db';
 import { UserModel } from '../models/user.model';
 
-const DEFAULT_ADMIN_EMAIL = 'ankitdwiivedi689@gmail.com';
+const DEFAULT_ADMIN_EMAIL = 'ankitd9988@gmail.com';
 const DEFAULT_ADMIN_NAME = 'Ankit Dwivedi';
 
 function promptText(question: string, defaultValue?: string): Promise<string> {
@@ -90,8 +90,18 @@ export async function createAdmin(): Promise<void> {
   }
 
   try {
+    const args = process.argv.slice(2);
+    let argEmail: string | undefined;
+    let argPassword: string | undefined;
+    let argName: string | undefined;
+    for (let i = 0; i < args.length; i++) {
+      if (args[i] === '--email' && args[i + 1]) argEmail = args[++i];
+      if (args[i] === '--password' && args[i + 1]) argPassword = args[++i];
+      if (args[i] === '--name' && args[i + 1]) argName = args[++i];
+    }
+
     // 2. Select Admin Email
-    const emailInput = await promptText(`Admin Email`, DEFAULT_ADMIN_EMAIL);
+    const emailInput = argEmail || process.env.ADMIN_EMAIL || (await promptText(`Admin Email`, DEFAULT_ADMIN_EMAIL));
     const normalizedEmail = emailInput.toLowerCase().trim();
 
     if (!normalizedEmail || !normalizedEmail.includes('@')) {
@@ -100,36 +110,8 @@ export async function createAdmin(): Promise<void> {
       process.exit(1);
     }
 
-    // 3. Duplicate & Silent Promotion Checks
-    const existingUser = await UserModel.findOne({ email: normalizedEmail }).lean();
-
-    if (existingUser) {
-      if (existingUser.role === 'admin') {
-        console.warn(`\n⚠️  Administrator account '${normalizedEmail}' already exists in MongoDB.`);
-        console.info(`   ID:         ${existingUser.id}`);
-        console.info(`   Name:       ${existingUser.fullName}`);
-        console.info(`   Role:       ${existingUser.role}`);
-        console.info(`   Status:     ${existingUser.status}`);
-        console.info(`   Created At: ${existingUser.createdAt}`);
-        console.info('\nNo duplicate administrator account was created. Existing account preserved.');
-        await disconnectDB();
-        process.exit(0);
-      }
-
-      // Strictly forbid silent promotion of non-admin accounts
-      console.error(
-        `\n❌ Security Error: An account with email '${normalizedEmail}' already exists with role '${existingUser.role}'.`
-      );
-      console.error(
-        '   Silent promotion of existing tourist, host, or guide accounts to administrator is strictly forbidden.'
-      );
-      console.error('   Please resolve the role conflict or use a dedicated administrator email address.\n');
-      await disconnectDB();
-      process.exit(1);
-    }
-
-    // 4. Prompt for Full Name
-    const fullNameInput = await promptText(`Admin Full Name`, DEFAULT_ADMIN_NAME);
+    // 3. Select Full Name & Password
+    const fullNameInput = argName || process.env.ADMIN_NAME || (await promptText(`Admin Full Name`, DEFAULT_ADMIN_NAME));
     const fullName = fullNameInput.trim();
 
     if (fullName.length < 2) {
@@ -138,8 +120,10 @@ export async function createAdmin(): Promise<void> {
       process.exit(1);
     }
 
-    // 5. Secure Hidden Password Prompt
-    const password = await promptHidden('Enter Admin Password (min 8 chars, letters + numbers/symbols): ');
+    let password = argPassword || process.env.ADMIN_PASSWORD;
+    if (!password) {
+      password = await promptHidden('Enter Admin Password (min 8 chars, letters + numbers/symbols): ');
+    }
 
     if (password.length < 8) {
       console.error('❌ Validation Error: Password must be at least 8 characters long.');
@@ -155,10 +139,42 @@ export async function createAdmin(): Promise<void> {
       process.exit(1);
     }
 
-    const confirmPassword = await promptHidden('Confirm Admin Password: ');
+    if (!argPassword && !process.env.ADMIN_PASSWORD) {
+      const confirmPassword = await promptHidden('Confirm Admin Password: ');
+      if (password !== confirmPassword) {
+        console.error('❌ Validation Error: Passwords do not match. Provisioning aborted.');
+        await disconnectDB();
+        process.exit(1);
+      }
+    }
 
-    if (password !== confirmPassword) {
-      console.error('❌ Validation Error: Passwords do not match. Provisioning aborted.');
+    // 4. Duplicate & Password Reset Handling
+    const existingUser = await UserModel.findOne({ email: normalizedEmail });
+
+    if (existingUser) {
+      if (existingUser.role === 'admin') {
+        existingUser.password = password; // Pre-save hook hashes with bcrypt
+        existingUser.fullName = fullName;
+        existingUser.status = 'active';
+        await existingUser.save();
+
+        console.log(`\n✅ Administrator account '${normalizedEmail}' updated with new password.`);
+        console.info(`   ID:         ${existingUser.id}`);
+        console.info(`   Name:       ${existingUser.fullName}`);
+        console.info(`   Role:       ${existingUser.role}`);
+        console.info(`   Status:     ${existingUser.status}`);
+        await disconnectDB();
+        return;
+      }
+
+      // Strictly forbid silent promotion of non-admin accounts
+      console.error(
+        `\n❌ Security Error: An account with email '${normalizedEmail}' already exists with role '${existingUser.role}'.`
+      );
+      console.error(
+        '   Silent promotion of existing tourist, host, or guide accounts to administrator is strictly forbidden.'
+      );
+      console.error('   Please resolve the role conflict or use a dedicated administrator email address.\n');
       await disconnectDB();
       process.exit(1);
     }
