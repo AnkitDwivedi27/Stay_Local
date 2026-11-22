@@ -16,6 +16,13 @@ export function isDatabaseConnected(): boolean {
   return mongoose.connection.readyState === 1;
 }
 
+export function getConnectedDatabaseName(): string | undefined {
+  if (mongoose.connection.readyState === 1) {
+    return mongoose.connection.name;
+  }
+  return undefined;
+}
+
 export function sanitizeMongoUri(uri?: string): string {
   if (!uri) return '';
   return uri.replace(/\/\/[^:]+:[^@]+@/, '//***:***@');
@@ -61,6 +68,7 @@ export async function connectDB(retries = 2): Promise<void> {
         autoIndex: env.NODE_ENV !== 'production',
       });
       console.info('[Database] Successfully connected to MongoDB Atlas.');
+      console.info(`[Database] Connected database: ${mongoose.connection.name}`);
       return;
     } catch (err) {
       const rawMsg = err instanceof Error ? err.message : String(err);

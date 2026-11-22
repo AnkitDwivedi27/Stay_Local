@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import { env } from '../config/env';
-import { getDatabaseStatus, isDatabaseConfigured, isDatabaseConnected } from '../config/db';
+import { getDatabaseStatus, isDatabaseConfigured, isDatabaseConnected, getConnectedDatabaseName } from '../config/db';
 
 export function getHealth(_req: Request, res: Response): void {
   const dbStatus = getDatabaseStatus();
@@ -14,6 +14,7 @@ export function getHealth(_req: Request, res: Response): void {
     environment: env.NODE_ENV,
     database: {
       status: dbStatus,
+      name: getConnectedDatabaseName(),
       configured: Boolean(env.MONGODB_URI && env.MONGODB_URI.trim().length > 0),
     },
   });
