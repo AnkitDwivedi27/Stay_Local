@@ -27,12 +27,20 @@ export interface StayAssignmentFields {
   assignmentHistory?: unknown[];
 }
 
-export interface UserRecordSummary {
+export interface UserRecordFull {
   _id: mongoose.Types.ObjectId;
   id: string;
   email: string;
+  password?: string;
   role: string;
-  fullName?: string;
+  status: string;
+  fullName: string;
+  phone?: string;
+  bio?: string;
+  avatarUrl?: string;
+  createdAt?: Date;
+  updatedAt?: Date;
+  __v?: number;
 }
 
 export interface DryRunStayReport {
@@ -66,9 +74,12 @@ export interface ResetSummary {
     totalHomestaysAfter: number;
     activeHostAssignmentsRemaining: number;
     allUnassigned: boolean;
-    allSevenFieldsRemoved: boolean;
+    allSevenFieldsAbsent: boolean;
     assignmentHistoryUnaltered: boolean;
-    adminAccountIntact: boolean;
+    backupIntegrityVerified: boolean;
+    userDocumentsIdentical: boolean;
+    adminPasswordHashIntact: boolean;
+    adminRoleIntact: boolean;
     hostAccountsIntact: boolean;
     userCountBefore: number;
     userCountAfter: number;
@@ -105,7 +116,7 @@ export async function runResetHostAssignments(options: ResetOptions = {}): Promi
     console.info('[Database] Successfully connected to MongoDB Atlas.');
   }
 
-  // Safety Requirement 7: Guard verifies connected database is strictly "staylocal"
+  // Safety Requirement: Guard verifies connected database is strictly "staylocal"
   const dbName = mongoose.connection.name;
   if (!dbName || dbName !== 'staylocal') {
     throw new Error(
@@ -116,28 +127,28 @@ export async function runResetHostAssignments(options: ResetOptions = {}): Promi
   const client = mongoose.connection.getClient();
   const db = client.db('staylocal');
 
-  // Pre-fetch state
+  // Pre-fetch state: Full raw homestays and complete user snapshots
   const preStays = await db.collection<StayAssignmentFields>('stays').find({}).sort({ id: 1 }).toArray();
-  const preUsers = await db.collection<UserRecordSummary>('users').find({}).toArray();
+  const preUsers = await db.collection<UserRecordFull>('users').find({}).sort({ id: 1 }).toArray();
 
-  // Safety Requirement 6: Verify exactly 6 homestays exist
+  // Safety Check: Verify exactly 6 homestays exist
   if (preStays.length !== 6) {
     throw new Error(
       `CRITICAL PRE-CHECK FAILURE: Expected exactly 6 homestays before execution, found ${preStays.length}. Execution blocked.`
     );
   }
 
-  // Safety Requirement 1: Targeted selector matching ONLY homestays requiring cleanup
+  // Correction 1: Targeted selector conditions use strictly { $exists: true }
   const targetedSelector: Record<string, unknown> = {
     $or: [
       { assignmentStatus: { $ne: 'unassigned' } },
-      { hostId: { $exists: true, $ne: null } },
-      { assignedHostId: { $exists: true, $ne: null } },
-      { assignedHostName: { $exists: true, $ne: null } },
-      { assignedHostEmail: { $exists: true, $ne: null } },
-      { assignedAt: { $exists: true, $ne: null } },
-      { assignedBy: { $exists: true, $ne: null } },
-      { assignedByName: { $exists: true, $ne: null } },
+      { hostId: { $exists: true } },
+      { assignedHostId: { $exists: true } },
+      { assignedHostName: { $exists: true } },
+      { assignedHostEmail: { $exists: true } },
+      { assignedAt: { $exists: true } },
+      { assignedBy: { $exists: true } },
+      { assignedByName: { $exists: true } },
     ],
   };
 
@@ -160,13 +171,14 @@ export async function runResetHostAssignments(options: ResetOptions = {}): Promi
   };
 
   for (const s of preStays) {
-    const hasHostId = Boolean(s.hostId);
-    const hasAssignedHostId = Boolean(s.assignedHostId);
-    const hasAssignedHostEmail = Boolean(s.assignedHostEmail);
-    const hasAssignedHostName = Boolean(s.assignedHostName);
-    const hasAssignedAt = Boolean(s.assignedAt);
-    const hasAssignedBy = Boolean(s.assignedBy);
-    const hasAssignedByName = Boolean(s.assignedByName);
+    const rawDoc = s as Record<string, unknown>;
+    const hasHostId = Object.prototype.hasOwnProperty.call(rawDoc, 'hostId');
+    const hasAssignedHostId = Object.prototype.hasOwnProperty.call(rawDoc, 'assignedHostId');
+    const hasAssignedHostEmail = Object.prototype.hasOwnProperty.call(rawDoc, 'assignedHostEmail');
+    const hasAssignedHostName = Object.prototype.hasOwnProperty.call(rawDoc, 'assignedHostName');
+    const hasAssignedAt = Object.prototype.hasOwnProperty.call(rawDoc, 'assignedAt');
+    const hasAssignedBy = Object.prototype.hasOwnProperty.call(rawDoc, 'assignedBy');
+    const hasAssignedByName = Object.prototype.hasOwnProperty.call(rawDoc, 'assignedByName');
 
     const hasAnyHostField =
       hasHostId ||
@@ -237,7 +249,7 @@ export async function runResetHostAssignments(options: ResetOptions = {}): Promi
 
   // EXECUTION BLOCK (Runs ONLY when --execute is passed)
   if (isExecute) {
-    // Safety Requirement 5: Pre-execution backup successfully written & verified before any DB modification
+    // Correction 2: Comprehensive backup integrity verification before database mutation
     console.log('[Safeguard 1] Verifying secure backup storage...');
     const backupDir = path.resolve(__dirname, '../../backups');
     if (!fs.existsSync(backupDir)) {
@@ -250,15 +262,43 @@ export async function runResetHostAssignments(options: ResetOptions = {}): Promi
     fs.writeFileSync(backupFile, JSON.stringify(preStays, null, 2), 'utf-8');
     summary.backupPath = backupFile;
 
-    // Verify backup file exists and has non-zero bytes on disk
+    // Read back and parse to verify backup integrity
     if (!fs.existsSync(backupFile) || fs.statSync(backupFile).size === 0) {
       throw new Error(
-        'CRITICAL SAFETY ABORT: Pre-execution backup file write verification failed. Aborting before any database mutation.'
+        'CRITICAL SAFETY ABORT: Pre-execution backup file write verification failed. File missing or 0 bytes.'
       );
     }
-    console.log(`[Safeguard 1] Pre-execution backup verified and written to disk:\n  ${backupFile}`);
 
-    // Safety Requirements 1, 2, 3 & 4: Targeted update removing only 7 active fields & setting unassigned
+    const readBackContent = fs.readFileSync(backupFile, 'utf-8');
+    let parsedBackup: unknown[];
+    try {
+      parsedBackup = JSON.parse(readBackContent);
+    } catch (parseErr) {
+      throw new Error(
+        `CRITICAL SAFETY ABORT: Backup integrity check failed: JSON parse error: ${(parseErr as Error).message}`
+      );
+    }
+
+    if (!Array.isArray(parsedBackup) || parsedBackup.length !== 6) {
+      throw new Error(
+        `CRITICAL SAFETY ABORT: Backup integrity check failed: expected 6 homestay documents, found ${parsedBackup?.length}.`
+      );
+    }
+
+    const backupIds = new Set(parsedBackup.map((item) => (item as { id?: string }).id));
+    const originalIds = preStays.map((s) => s.id);
+    for (const origId of originalIds) {
+      if (!backupIds.has(origId)) {
+        throw new Error(
+          `CRITICAL SAFETY ABORT: Backup integrity check failed: original homestay ID '${origId}' missing from backup!`
+        );
+      }
+    }
+    console.log(
+      `[Safeguard 1] Pre-execution backup verified, read back, and validated with all 6 homestay IDs:\n  ${backupFile}`
+    );
+
+    // Targeted update removing only 7 active fields & setting unassigned
     console.log('[Safeguard 2] Executing targeted host assignment reset on staylocal.stays...');
     const updateResult = await db.collection('stays').updateMany(
       targetedSelector,
@@ -281,19 +321,19 @@ export async function runResetHostAssignments(options: ResetOptions = {}): Promi
       `[Execute] Targeted selector matched: ${updateResult.matchedCount}, Modified: ${updateResult.modifiedCount}`
     );
 
-    // POST-EXECUTION RIGOROUS ASSERTIONS (Safety Requirement 6)
+    // POST-EXECUTION RIGOROUS ASSERTIONS
     console.log('[Safeguard 3] Running post-execution verification assertions...');
     const postStays = await db.collection<StayAssignmentFields>('stays').find({}).sort({ id: 1 }).toArray();
-    const postUsers = await db.collection<UserRecordSummary>('users').find({}).toArray();
+    const postUsers = await db.collection<UserRecordFull>('users').find({}).sort({ id: 1 }).toArray();
 
-    // Assertion 6a: Exactly 6 homestays exist
+    // Assertion 1: Exactly 6 homestays exist
     if (postStays.length !== 6) {
       throw new Error(
         `CRITICAL POST-CHECK FAILURE: Expected exactly 6 homestays after execution, found ${postStays.length}!`
       );
     }
 
-    // Assertion 6b & 6c: No homestay contains any of the 7 active assignment fields & all assignmentStatus === 'unassigned'
+    // Correction 1 Post-Assertion: Use hasOwnProperty.call to verify actual field absence
     for (const s of postStays) {
       if (s.assignmentStatus !== 'unassigned') {
         throw new Error(
@@ -301,19 +341,19 @@ export async function runResetHostAssignments(options: ResetOptions = {}): Promi
         );
       }
 
+      const rawStay = s as unknown as Record<string, unknown>;
       for (const field of TARGET_ACTIVE_FIELDS) {
-        const val = (s as unknown as Record<string, unknown>)[field];
-        if (val !== undefined && val !== null) {
+        if (Object.prototype.hasOwnProperty.call(rawStay, field)) {
           throw new Error(
-            `CRITICAL POST-CHECK FAILURE: Homestay '${s.id}' still contains active field '${field}': ${JSON.stringify(
-              val
+            `CRITICAL POST-CHECK FAILURE: Homestay '${s.id}' still has property '${field}' on document: ${JSON.stringify(
+              rawStay[field]
             )}!`
           );
         }
       }
     }
 
-    // Assertion 6d: assignmentHistory remains completely unchanged
+    // Assertion: assignmentHistory remains completely unchanged
     for (const preStay of preStays) {
       const postStay = postStays.find((s) => s.id === preStay.id);
       if (!postStay) {
@@ -326,26 +366,50 @@ export async function runResetHostAssignments(options: ResetOptions = {}): Promi
       }
     }
 
-    // Assertion 6e: Primary admin and all host accounts remain unchanged
-    const preAdmin = preUsers.find((u) => u.email === 'ankitd9988@gmail.com' && u.role === 'admin');
-    const postAdmin = postUsers.find((u) => u.email === 'ankitd9988@gmail.com' && u.role === 'admin');
-    if (!preAdmin || !postAdmin || preAdmin.id !== postAdmin.id) {
-      throw new Error('CRITICAL POST-CHECK FAILURE: Primary admin account was modified or missing!');
-    }
-
-    const preHosts = preUsers.filter((u) => u.role === 'host');
-    const postHosts = postUsers.filter((u) => u.role === 'host');
-    if (
-      preHosts.length !== postHosts.length ||
-      !preHosts.every((ph) => postHosts.some((poh) => poh.id === ph.id && poh.email === ph.email))
-    ) {
-      throw new Error('CRITICAL POST-CHECK FAILURE: Host accounts were modified or missing!');
-    }
-
+    // Correction 3: Complete user snapshot comparison verification
     if (preUsers.length !== postUsers.length) {
       throw new Error(
         `CRITICAL POST-CHECK FAILURE: User count changed from ${preUsers.length} to ${postUsers.length}!`
       );
+    }
+
+    // Full JSON snapshot comparison across all user documents
+    const preUsersJson = JSON.stringify(preUsers);
+    const postUsersJson = JSON.stringify(postUsers);
+    if (preUsersJson !== postUsersJson) {
+      throw new Error(
+        'CRITICAL POST-CHECK FAILURE: User collection was modified! Snapshot comparison mismatch.'
+      );
+    }
+
+    // Explicit primary admin assertion
+    const preAdmin = preUsers.find((u) => u.email === 'ankitd9988@gmail.com' && u.role === 'admin');
+    const postAdmin = postUsers.find((u) => u.email === 'ankitd9988@gmail.com' && u.role === 'admin');
+    if (!preAdmin || !postAdmin) {
+      throw new Error('CRITICAL POST-CHECK FAILURE: Primary admin account missing!');
+    }
+    if (
+      preAdmin.id !== postAdmin.id ||
+      preAdmin.password !== postAdmin.password ||
+      preAdmin.role !== postAdmin.role ||
+      preAdmin.status !== postAdmin.status
+    ) {
+      throw new Error(
+        'CRITICAL POST-CHECK FAILURE: Primary admin credentials, password hash, role, or ID were altered!'
+      );
+    }
+
+    // Explicit host account assertions
+    const preHosts = preUsers.filter((u) => u.role === 'host');
+    const postHosts = postUsers.filter((u) => u.role === 'host');
+    if (preHosts.length !== postHosts.length) {
+      throw new Error('CRITICAL POST-CHECK FAILURE: Host account count changed!');
+    }
+    for (const preHost of preHosts) {
+      const postHost = postHosts.find((ph) => ph.id === preHost.id);
+      if (!postHost || postHost.password !== preHost.password || postHost.email !== preHost.email) {
+        throw new Error(`CRITICAL POST-CHECK FAILURE: Host account '${preHost.email}' was modified!`);
+      }
     }
 
     summary.postVerification = {
@@ -353,15 +417,18 @@ export async function runResetHostAssignments(options: ResetOptions = {}): Promi
       totalHomestaysAfter: postStays.length,
       activeHostAssignmentsRemaining: 0,
       allUnassigned: true,
-      allSevenFieldsRemoved: true,
+      allSevenFieldsAbsent: true,
       assignmentHistoryUnaltered: true,
-      adminAccountIntact: true,
+      backupIntegrityVerified: true,
+      userDocumentsIdentical: true,
+      adminPasswordHashIntact: true,
+      adminRoleIntact: true,
       hostAccountsIntact: true,
       userCountBefore: preUsers.length,
       userCountAfter: postUsers.length,
     };
 
-    console.log('[Safeguard 3] All 6 post-execution assertions PASSED with 100% integrity.');
+    console.log('[Safeguard 3] All post-execution assertions PASSED with 100% integrity.');
   }
 
   return summary;
@@ -423,7 +490,7 @@ if (process.argv[1]?.includes('reset-host-assignments')) {
           `Assertion 1 (Count):      ${summary.postVerification.totalHomestaysBefore} -> ${summary.postVerification.totalHomestaysAfter} (Exactly 6 homestays: ✅ PASS)`
         );
         console.log(
-          `Assertion 2 (Fields):     All 7 active assignment fields removed: ${summary.postVerification.allSevenFieldsRemoved ? '✅ PASS' : '❌ FAIL'}`
+          `Assertion 2 (Absence):    All 7 active assignment fields absent via hasOwnProperty: ${summary.postVerification.allSevenFieldsAbsent ? '✅ PASS' : '❌ FAIL'}`
         );
         console.log(
           `Assertion 3 (Status):     Every homestay assignmentStatus = "unassigned": ${summary.postVerification.allUnassigned ? '✅ PASS' : '❌ FAIL'}`
@@ -432,13 +499,16 @@ if (process.argv[1]?.includes('reset-host-assignments')) {
           `Assertion 4 (Audit):      assignmentHistory completely unaltered: ${summary.postVerification.assignmentHistoryUnaltered ? '✅ PASS' : '❌ FAIL'}`
         );
         console.log(
-          `Assertion 5 (Admin):      Primary Admin (ankitd9988@gmail.com) intact: ${summary.postVerification.adminAccountIntact ? '✅ PASS' : '❌ FAIL'}`
+          `Assertion 5 (Backup):     Backup read back & validated: ${summary.postVerification.backupIntegrityVerified ? '✅ PASS' : '❌ FAIL'}`
         );
         console.log(
-          `Assertion 6 (Hosts):      All host accounts intact: ${summary.postVerification.hostAccountsIntact ? '✅ PASS' : '❌ FAIL'}`
+          `Assertion 6 (Users):      All user documents byte-identical: ${summary.postVerification.userDocumentsIdentical ? '✅ PASS' : '❌ FAIL'}`
         );
         console.log(
-          `Assertion 7 (Users):      Total user count unchanged (${summary.postVerification.userCountBefore} -> ${summary.postVerification.userCountAfter}: ✅ PASS)`
+          `Assertion 7 (Admin):      Admin password hash & role intact: ${summary.postVerification.adminPasswordHashIntact ? '✅ PASS' : '❌ FAIL'}`
+        );
+        console.log(
+          `Assertion 8 (Hosts):      Host accounts intact: ${summary.postVerification.hostAccountsIntact ? '✅ PASS' : '❌ FAIL'}`
         );
       }
 
