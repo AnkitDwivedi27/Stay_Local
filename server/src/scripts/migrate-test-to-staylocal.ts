@@ -8,12 +8,71 @@ export interface MigrationOptions {
   quiet?: boolean;
 }
 
-export interface DryRunAction {
-  targetCollection: string;
-  action: 'insert' | 'skip' | 'update';
-  identifier: string;
-  reason: string;
-  documentDetails?: Record<string, unknown>;
+export interface RawMongoUser {
+  _id: mongoose.Types.ObjectId;
+  id: string;
+  email: string;
+  role: string;
+  fullName?: string;
+  password?: string;
+  status?: string;
+  phone?: string;
+  bio?: string;
+  avatarUrl?: string;
+  createdAt?: Date;
+  updatedAt?: Date;
+  __v?: number;
+}
+
+export interface RawMongoBooking {
+  _id: mongoose.Types.ObjectId;
+  id: string;
+  bookingReference: string;
+  touristId: string;
+  hostId: string;
+  stayId: string;
+  touristName?: string;
+  touristEmail?: string;
+  touristPhone?: string;
+  stayName?: string;
+  stayLocality?: string;
+  stayDistrict?: string;
+  checkIn?: Date | string;
+  checkOut?: Date | string;
+  guestCount?: number;
+  pricing?: {
+    nights?: number;
+    pricePerNight?: number;
+    baseAmount?: number;
+    communityFee?: number;
+    taxAmount?: number;
+    totalAmount?: number;
+    currency?: string;
+  };
+  status?: string;
+  createdAt?: Date;
+  updatedAt?: Date;
+  confirmedAt?: Date;
+  __v?: number;
+}
+
+export interface RawMongoStay {
+  _id: mongoose.Types.ObjectId;
+  id: string;
+  name: string;
+  hostId?: string;
+  assignedHostId?: string;
+  assignedHostEmail?: string;
+  assignedHostName?: string;
+  assignedAt?: Date;
+  assignedBy?: string;
+  assignedByName?: string;
+  assignmentStatus?: string;
+  verificationStatus?: string;
+  verificationNotes?: string;
+  verificationHistory?: unknown[];
+  hostAuthorization?: Record<string, unknown>;
+  submissionEvidence?: string;
 }
 
 export interface MigrationReport {
@@ -80,21 +139,21 @@ export async function runMigration(options: MigrationOptions = {}): Promise<Migr
     await connectDB();
   }
 
-  const client = mongoose.connection.client;
+  const client = mongoose.connection.getClient();
   const dbTest = client.db('test');
   const dbStaylocal = client.db('staylocal');
 
   // 1. Initial State Snapshot
-  const initialTestUsers = await dbTest.collection('users').find({}).toArray();
-  const initialStaylocalUsers = await dbStaylocal.collection('users').find({}).toArray();
-  const initialTestBookings = await dbTest.collection('bookings').find({}).toArray();
-  const initialStaylocalBookings = await dbStaylocal.collection('bookings').find({}).toArray();
-  const initialStaylocalStayMun = await dbStaylocal.collection('stays').findOne({ id: 'stay-mun-01' });
-  const testStayMun = await dbTest.collection('stays').findOne({ id: 'stay-mun-01' });
+  const initialTestUsers = await dbTest.collection<RawMongoUser>('users').find({}).toArray();
+  const initialStaylocalUsers = await dbStaylocal.collection<RawMongoUser>('users').find({}).toArray();
+  const initialTestBookings = await dbTest.collection<RawMongoBooking>('bookings').find({}).toArray();
+  const initialStaylocalBookings = await dbStaylocal.collection<RawMongoBooking>('bookings').find({}).toArray();
+  const initialStaylocalStayMun = await dbStaylocal.collection<RawMongoStay>('stays').findOne({ id: 'stay-mun-01' });
+  const testStayMun = await dbTest.collection<RawMongoStay>('stays').findOne({ id: 'stay-mun-01' });
 
   // Verify initial admin presence in staylocal
   const originalAdmin = initialStaylocalUsers.find(
-    (u) => u.email.toLowerCase() === 'ankitd9988@gmail.com' && u.role === 'admin'
+    (u: RawMongoUser) => u.email.toLowerCase() === 'ankitd9988@gmail.com' && u.role === 'admin'
   );
   if (!originalAdmin) {
     throw new Error('CRITICAL ABORT: Admin account ankitd9988@gmail.com (role: admin) not found in staylocal.');
@@ -148,11 +207,11 @@ export async function runMigration(options: MigrationOptions = {}): Promise<Migr
     finalUserCountVerified: false,
   };
 
-  const existingStaylocalEmails = new Set(initialStaylocalUsers.map((u) => u.email.toLowerCase()));
-  const existingStaylocalBookingIds = new Set(initialStaylocalBookings.map((b) => b.id));
+  const existingStaylocalEmails = new Set(initialStaylocalUsers.map((u: RawMongoUser) => u.email.toLowerCase()));
+  const existingStaylocalBookingIds = new Set(initialStaylocalBookings.map((b: RawMongoBooking) => b.id));
 
   // Users to migrate
-  const usersToMigrate: any[] = [];
+  const usersToMigrate: RawMongoUser[] = [];
   const seenEmailsInMigration = new Set<string>();
   const REFERENCED_ADMIN_ID = 'usr-admin-mw09dkhh-v1cmr';
 
@@ -166,7 +225,7 @@ export async function runMigration(options: MigrationOptions = {}): Promise<Migr
         id: user.id,
         email: user.email,
         reason: `Email already exists in staylocal as protected account (Role: ${
-          initialStaylocalUsers.find((u) => u.email.toLowerCase() === email)?.role
+          initialStaylocalUsers.find((u: RawMongoUser) => u.email.toLowerCase() === email)?.role
         }). Preserving staylocal version.`,
       });
       continue;
@@ -205,7 +264,7 @@ export async function runMigration(options: MigrationOptions = {}): Promise<Migr
   }
 
   // Bookings to migrate
-  const bookingsToMigrate: any[] = [];
+  const bookingsToMigrate: RawMongoBooking[] = [];
   for (const bk of initialTestBookings) {
     if (existingStaylocalBookingIds.has(bk.id)) {
       report.bookings.toSkip += 1;
@@ -232,11 +291,13 @@ export async function runMigration(options: MigrationOptions = {}): Promise<Migr
 
   // Pre-Execution Reference Verification
   const candidateUserIds = new Set([
-    ...initialStaylocalUsers.map((u) => u.id),
-    ...usersToMigrate.map((u) => u.id),
+    ...initialStaylocalUsers.map((u: RawMongoUser) => u.id),
+    ...usersToMigrate.map((u: RawMongoUser) => u.id),
   ]);
   const candidateStayIds = new Set(
-    (await dbStaylocal.collection('stays').find({}, { projection: { id: 1 } }).toArray()).map((s) => s.id)
+    (await dbStaylocal.collection<{ id: string }>('stays').find({}, { projection: { id: 1 } }).toArray()).map(
+      (s: { id: string }) => s.id
+    )
   );
 
   if (bookingsToMigrate.length > 0) {
@@ -268,8 +329,8 @@ export async function runMigration(options: MigrationOptions = {}): Promise<Migr
     const staylocalBackupFile = path.join(backupDir, `backup_staylocal_${timestampStr}.json`);
 
     const collectionsToBackup = ['users', 'bookings', 'stays', 'destinations', 'experiences', 'localtreasures', 'guideexperiences'];
-    const testSnapshot: Record<string, any[]> = {};
-    const staylocalSnapshot: Record<string, any[]> = {};
+    const testSnapshot: Record<string, unknown[]> = {};
+    const staylocalSnapshot: Record<string, unknown[]> = {};
 
     for (const c of collectionsToBackup) {
       testSnapshot[c] = await dbTest.collection(c).find({}).toArray();
@@ -290,7 +351,7 @@ export async function runMigration(options: MigrationOptions = {}): Promise<Migr
     // [Safeguard 2 & 3] Idempotent upsert of users preserving _id and original fields
     console.log('[Safeguard 2 & 3] Migrating users into staylocal.users...');
     for (const u of usersToMigrate) {
-      const res = await dbStaylocal.collection('users').updateOne(
+      const res = await dbStaylocal.collection<RawMongoUser>('users').updateOne(
         { email: u.email.toLowerCase() },
         { $setOnInsert: u },
         { upsert: true }
@@ -303,7 +364,7 @@ export async function runMigration(options: MigrationOptions = {}): Promise<Migr
     // [Safeguard 2] Idempotent upsert of bookings preserving _id, status, pricing, timestamps
     console.log('[Safeguard 2] Migrating bookings into staylocal.bookings...');
     for (const b of bookingsToMigrate) {
-      const res = await dbStaylocal.collection('bookings').updateOne(
+      const res = await dbStaylocal.collection<RawMongoBooking>('bookings').updateOne(
         { id: b.id },
         { $setOnInsert: b },
         { upsert: true }
@@ -341,9 +402,9 @@ export async function runMigration(options: MigrationOptions = {}): Promise<Migr
 
     // POST-MIGRATION VERIFICATION
     console.log('[Post-Verification] Verifying database state...');
-    const postUsers = await dbStaylocal.collection('users').find({}).toArray();
-    const postBookings = await dbStaylocal.collection('bookings').find({}).toArray();
-    const postStayMun = await dbStaylocal.collection('stays').findOne({ id: 'stay-mun-01' });
+    const postUsers = await dbStaylocal.collection<RawMongoUser>('users').find({}).toArray();
+    const postBookings = await dbStaylocal.collection<RawMongoBooking>('bookings').find({}).toArray();
+    const postStayMun = await dbStaylocal.collection<RawMongoStay>('stays').findOne({ id: 'stay-mun-01' });
 
     report.after.staylocalUsersCount = postUsers.length;
     report.after.staylocalBookingsCount = postBookings.length;
@@ -351,7 +412,7 @@ export async function runMigration(options: MigrationOptions = {}): Promise<Migr
     report.after.staylocalStayMunVerificationStatus = postStayMun?.verificationStatus;
 
     // Verify Admin Account is untouched
-    const currentAdmin = postUsers.find((u) => u.email.toLowerCase() === 'ankitd9988@gmail.com');
+    const currentAdmin = postUsers.find((u: RawMongoUser) => u.email.toLowerCase() === 'ankitd9988@gmail.com');
     if (!currentAdmin || currentAdmin.role !== 'admin' || currentAdmin.id !== originalAdmin.id) {
       throw new Error('CRITICAL POST-CHECK FAILURE: Admin account was altered or corrupted!');
     }
@@ -364,14 +425,14 @@ export async function runMigration(options: MigrationOptions = {}): Promise<Migr
     report.finalUserCountVerified = true;
 
     // Verify Booking References in staylocal
-    const migratedBooking = postBookings.find((b) => b.bookingReference === 'SLB-CY57FU');
+    const migratedBooking = postBookings.find((b: RawMongoBooking) => b.bookingReference === 'SLB-CY57FU');
     if (!migratedBooking) {
       throw new Error('CRITICAL POST-CHECK FAILURE: Booking SLB-CY57FU not found in staylocal.bookings!');
     }
 
-    const touristDoc = postUsers.find((u) => u.id === migratedBooking.touristId);
-    const hostDoc = postUsers.find((u) => u.id === migratedBooking.hostId);
-    const stayDoc = await dbStaylocal.collection('stays').findOne({ id: migratedBooking.stayId });
+    const touristDoc = postUsers.find((u: RawMongoUser) => u.id === migratedBooking.touristId);
+    const hostDoc = postUsers.find((u: RawMongoUser) => u.id === migratedBooking.hostId);
+    const stayDoc = await dbStaylocal.collection<RawMongoStay>('stays').findOne({ id: migratedBooking.stayId });
 
     if (!touristDoc || !hostDoc || !stayDoc) {
       throw new Error('CRITICAL POST-CHECK FAILURE: Booking references could not be resolved in staylocal!');
