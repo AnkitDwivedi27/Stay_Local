@@ -77,6 +77,9 @@ export interface ResetSummary {
     allSevenFieldsAbsent: boolean;
     assignmentHistoryUnaltered: boolean;
     backupIntegrityVerified: boolean;
+    targetIdSafetyVerified: boolean;
+    matchedCountExact: boolean;
+    modifiedCountExact: boolean;
     userDocumentsIdentical: boolean;
     adminPasswordHashIntact: boolean;
     adminRoleIntact: boolean;
@@ -95,6 +98,8 @@ export const TARGET_ACTIVE_FIELDS = [
   'assignedBy',
   'assignedByName',
 ] as const;
+
+export const APPROVED_CLEANUP_IDS = ['stay-bhm-01', 'stay-mun-01', 'stay-mun-02'] as const;
 
 export async function runResetHostAssignments(options: ResetOptions = {}): Promise<ResetSummary> {
   const isExecute = Boolean(options.execute);
@@ -154,12 +159,36 @@ export async function runResetHostAssignments(options: ResetOptions = {}): Promi
 
   const matchedHomestays = await db.collection<StayAssignmentFields>('stays').find(targetedSelector).toArray();
   const matchedIds = new Set(matchedHomestays.map((s) => s.id));
+  const matchedIdList = matchedHomestays.map((s) => s.id).sort();
+
+  // Safety Assertion: Verify matched cleanup homestays strictly match approved list
+  if (matchedHomestays.length !== 3) {
+    throw new Error(
+      `CRITICAL TARGET-ID SAFETY ABORT: Expected exactly 3 homestays matching targeted cleanup selector, found ${matchedHomestays.length}.`
+    );
+  }
+
+  const idsMatchApprovedList =
+    matchedIdList.length === APPROVED_CLEANUP_IDS.length &&
+    matchedIdList.every((id, idx) => id === APPROVED_CLEANUP_IDS[idx]);
+
+  if (!idsMatchApprovedList) {
+    throw new Error(
+      `CRITICAL TARGET-ID SAFETY ABORT: Matched homestay IDs [${matchedIdList.join(
+        ', '
+      )}] differ from approved cleanup list [${APPROVED_CLEANUP_IDS.join(', ')}]!`
+    );
+  }
+
+  const executionUpdateSelector: Record<string, unknown> = {
+    $and: [{ id: { $in: [...APPROVED_CLEANUP_IDS] } }, targetedSelector],
+  };
 
   const summary: ResetSummary = {
     timestamp: new Date().toISOString(),
     mode,
     databaseName: dbName,
-    targetSelector: targetedSelector,
+    targetSelector: executionUpdateSelector,
     metrics: {
       totalHomestays: preStays.length,
       assignedHomestays: 0,
@@ -298,10 +327,46 @@ export async function runResetHostAssignments(options: ResetOptions = {}): Promi
       `[Safeguard 1] Pre-execution backup verified, read back, and validated with all 6 homestay IDs:\n  ${backupFile}`
     );
 
-    // Targeted update removing only 7 active fields & setting unassigned
-    console.log('[Safeguard 2] Executing targeted host assignment reset on staylocal.stays...');
+    // Safeguard 2: Exact Target-ID Safety Assertion immediately before updateMany()
+    console.log('[Safeguard 2] Verifying exact target-ID safety assertion immediately before updateMany()...');
+    const matchedStaysToClean = await db
+      .collection<StayAssignmentFields>('stays')
+      .find(targetedSelector)
+      .toArray();
+    const matchedStayIds = matchedStaysToClean.map((s) => s.id).sort();
+
+    if (matchedStaysToClean.length !== 3) {
+      throw new Error(
+        `CRITICAL TARGET-ID SAFETY ABORT: Expected exactly 3 homestays for cleanup immediately before update, but found ${matchedStaysToClean.length}!`
+      );
+    }
+
+    const preUpdateIdsMatch =
+      matchedStayIds.length === APPROVED_CLEANUP_IDS.length &&
+      matchedStayIds.every((id, idx) => id === APPROVED_CLEANUP_IDS[idx]);
+
+    if (!preUpdateIdsMatch) {
+      throw new Error(
+        `CRITICAL TARGET-ID SAFETY ABORT: Matched homestay IDs [${matchedStayIds.join(
+          ', '
+        )}] differ from approved cleanup list [${APPROVED_CLEANUP_IDS.join(', ')}]!`
+      );
+    }
+    console.log(
+      `[Safeguard 2] Exact target-ID safety assertion PASSED: Matched exactly [${matchedStayIds.join(', ')}].`
+    );
+
+    // Safeguard 3: Targeted update explicitly restricted to approved cleanup IDs and targeted selector
+    console.log('[Safeguard 3] Executing targeted host assignment reset on staylocal.stays...');
+    const executionUpdateSelector: Record<string, unknown> = {
+      $and: [
+        { id: { $in: [...APPROVED_CLEANUP_IDS] } },
+        targetedSelector,
+      ],
+    };
+
     const updateResult = await db.collection('stays').updateMany(
-      targetedSelector,
+      executionUpdateSelector,
       {
         $set: {
           assignmentStatus: 'unassigned',
@@ -318,11 +383,27 @@ export async function runResetHostAssignments(options: ResetOptions = {}): Promi
       }
     );
     console.log(
-      `[Execute] Targeted selector matched: ${updateResult.matchedCount}, Modified: ${updateResult.modifiedCount}`
+      `[Execute] Update selector matched: ${updateResult.matchedCount}, Modified: ${updateResult.modifiedCount}`
+    );
+
+    // Strict verifications on matchedCount and modifiedCount
+    if (updateResult.matchedCount !== 3) {
+      throw new Error(
+        `CRITICAL EXECUTION FAILURE: Expected updateResult.matchedCount to be exactly 3, but received ${updateResult.matchedCount}!`
+      );
+    }
+
+    if (updateResult.modifiedCount !== 3) {
+      throw new Error(
+        `CRITICAL EXECUTION FAILURE: Expected updateResult.modifiedCount to be exactly 3 for the reported database state, but received ${updateResult.modifiedCount}!`
+      );
+    }
+    console.log(
+      '[Safeguard 3] updateResult.matchedCount (3) and updateResult.modifiedCount (3) verified with 100% precision.'
     );
 
     // POST-EXECUTION RIGOROUS ASSERTIONS
-    console.log('[Safeguard 3] Running post-execution verification assertions...');
+    console.log('[Safeguard 4] Running post-execution verification assertions...');
     const postStays = await db.collection<StayAssignmentFields>('stays').find({}).sort({ id: 1 }).toArray();
     const postUsers = await db.collection<UserRecordFull>('users').find({}).sort({ id: 1 }).toArray();
 
@@ -420,6 +501,9 @@ export async function runResetHostAssignments(options: ResetOptions = {}): Promi
       allSevenFieldsAbsent: true,
       assignmentHistoryUnaltered: true,
       backupIntegrityVerified: true,
+      targetIdSafetyVerified: true,
+      matchedCountExact: updateResult.matchedCount === 3,
+      modifiedCountExact: updateResult.modifiedCount === 3,
       userDocumentsIdentical: true,
       adminPasswordHashIntact: true,
       adminRoleIntact: true,
@@ -428,7 +512,7 @@ export async function runResetHostAssignments(options: ResetOptions = {}): Promi
       userCountAfter: postUsers.length,
     };
 
-    console.log('[Safeguard 3] All post-execution assertions PASSED with 100% integrity.');
+    console.log('[Safeguard 4] All post-execution assertions PASSED with 100% integrity.');
   }
 
   return summary;
@@ -467,6 +551,11 @@ if (process.argv[1]?.includes('reset-host-assignments')) {
         `Targeted for Cleanup:     ${summary.metrics.homestaysMatchedByTargetedSelector} (Matches exactly assigned + stale)`
       );
 
+      console.log('\n--- TARGET-ID SAFETY VERIFICATION ---');
+      console.log('Approved Cleanup IDs (3): stay-mun-01, stay-mun-02, stay-bhm-01');
+      console.log('Matched Cleanup IDs (3):  stay-bhm-01, stay-mun-01, stay-mun-02');
+      console.log('Target-ID Safety Guard:   ✅ PASSED (Exact match: count === 3, IDs strictly identical)');
+
       console.log('\n--- HOMESTAY-BY-HOMESTAY BREAKDOWN ---');
       summary.stayReports.forEach((r) => {
         console.log(`\n[${r.id}] ${r.name}`);
@@ -490,25 +579,31 @@ if (process.argv[1]?.includes('reset-host-assignments')) {
           `Assertion 1 (Count):      ${summary.postVerification.totalHomestaysBefore} -> ${summary.postVerification.totalHomestaysAfter} (Exactly 6 homestays: ✅ PASS)`
         );
         console.log(
-          `Assertion 2 (Absence):    All 7 active assignment fields absent via hasOwnProperty: ${summary.postVerification.allSevenFieldsAbsent ? '✅ PASS' : '❌ FAIL'}`
+          `Assertion 2 (Target IDs): Matched exactly approved 3 IDs [stay-bhm-01, stay-mun-01, stay-mun-02]: ${summary.postVerification.targetIdSafetyVerified ? '✅ PASS' : '❌ FAIL'}`
         );
         console.log(
-          `Assertion 3 (Status):     Every homestay assignmentStatus = "unassigned": ${summary.postVerification.allUnassigned ? '✅ PASS' : '❌ FAIL'}`
+          `Assertion 3 (Counts):     matchedCount === 3 && modifiedCount === 3: ${summary.postVerification.matchedCountExact && summary.postVerification.modifiedCountExact ? '✅ PASS' : '❌ FAIL'}`
         );
         console.log(
-          `Assertion 4 (Audit):      assignmentHistory completely unaltered: ${summary.postVerification.assignmentHistoryUnaltered ? '✅ PASS' : '❌ FAIL'}`
+          `Assertion 4 (Absence):    All 7 active assignment fields absent via hasOwnProperty: ${summary.postVerification.allSevenFieldsAbsent ? '✅ PASS' : '❌ FAIL'}`
         );
         console.log(
-          `Assertion 5 (Backup):     Backup read back & validated: ${summary.postVerification.backupIntegrityVerified ? '✅ PASS' : '❌ FAIL'}`
+          `Assertion 5 (Status):     Every homestay assignmentStatus = "unassigned": ${summary.postVerification.allUnassigned ? '✅ PASS' : '❌ FAIL'}`
         );
         console.log(
-          `Assertion 6 (Users):      All user documents byte-identical: ${summary.postVerification.userDocumentsIdentical ? '✅ PASS' : '❌ FAIL'}`
+          `Assertion 6 (Audit):      assignmentHistory completely unaltered: ${summary.postVerification.assignmentHistoryUnaltered ? '✅ PASS' : '❌ FAIL'}`
         );
         console.log(
-          `Assertion 7 (Admin):      Admin password hash & role intact: ${summary.postVerification.adminPasswordHashIntact ? '✅ PASS' : '❌ FAIL'}`
+          `Assertion 7 (Backup):     Backup read back & validated: ${summary.postVerification.backupIntegrityVerified ? '✅ PASS' : '❌ FAIL'}`
         );
         console.log(
-          `Assertion 8 (Hosts):      Host accounts intact: ${summary.postVerification.hostAccountsIntact ? '✅ PASS' : '❌ FAIL'}`
+          `Assertion 8 (Users):      All user documents byte-identical: ${summary.postVerification.userDocumentsIdentical ? '✅ PASS' : '❌ FAIL'}`
+        );
+        console.log(
+          `Assertion 9 (Admin):      Admin password hash & role intact: ${summary.postVerification.adminPasswordHashIntact ? '✅ PASS' : '❌ FAIL'}`
+        );
+        console.log(
+          `Assertion 10 (Hosts):     Host accounts intact: ${summary.postVerification.hostAccountsIntact ? '✅ PASS' : '❌ FAIL'}`
         );
       }
 
