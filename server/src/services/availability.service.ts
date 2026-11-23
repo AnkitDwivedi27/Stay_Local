@@ -65,26 +65,29 @@ export async function getOccupiedBedsForInterval(
   requestedCheckIn: Date,
   requestedCheckOut: Date,
   cleaningBufferMinutes: number,
-  excludeBookingId?: string
+  excludeBookingId?: string,
+  includePending: boolean = true
 ): Promise<number> {
   const bufferMs = Math.max(0, cleaningBufferMinutes || 0) * 60 * 1000;
   const now = new Date();
 
   // Active bookings:
   // - status === 'confirmed'
-  // - status === 'pending' AND (expiresAt > now OR createdAt > now - 30 minutes)
+  // - status === 'pending' AND (expiresAt > now OR createdAt > now - 30 minutes) (when includePending is true)
+  const statusClauses: Record<string, unknown>[] = [{ status: 'confirmed' }];
+  if (includePending) {
+    statusClauses.push({
+      status: 'pending',
+      $or: [
+        { expiresAt: { $gt: now } },
+        { expiresAt: { $exists: false }, createdAt: { $gt: new Date(Date.now() - 30 * 60 * 1000) } },
+      ],
+    });
+  }
+
   const query: Record<string, unknown> = {
     stayId: stayId.toLowerCase(),
-    $or: [
-      { status: 'confirmed' },
-      {
-        status: 'pending',
-        $or: [
-          { expiresAt: { $gt: now } },
-          { expiresAt: { $exists: false }, createdAt: { $gt: new Date(Date.now() - 30 * 60 * 1000) } },
-        ],
-      },
-    ],
+    $or: statusClauses,
   };
 
   if (excludeBookingId) {
@@ -95,7 +98,11 @@ export async function getOccupiedBedsForInterval(
   // Candidate checkIn must be < requestedCheckOut
   query.checkIn = { $lt: requestedCheckOut };
 
-  const candidates = await BookingModel.find(query).lean();
+  const queryResult = BookingModel.find(query);
+  const candidatesRaw = typeof (queryResult as any)?.lean === 'function'
+    ? await (queryResult as any).lean()
+    : await queryResult;
+  const candidates = Array.isArray(candidatesRaw) ? candidatesRaw : [];
 
   // Filter overlapping bookings where:
   // candidate.checkIn < requestedCheckOut AND (candidate.checkOut + bufferMs) > requestedCheckIn

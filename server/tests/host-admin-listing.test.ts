@@ -213,10 +213,22 @@ describe('StayLocal Host Listing Management & Admin Verification Workflow', () =
     vi.spyOn(BookingModel, 'find').mockImplementation((filter: any) => {
       let results = Array.from(inMemoryBookings.values());
       if (filter?.stayId) results = results.filter((b) => b.stayId === filter.stayId);
+      if (filter?.id?.$ne) results = results.filter((b) => b.id !== filter.id.$ne);
+      if (filter?.$or) {
+        results = results.filter((b) => {
+          return filter.$or.some((clause: any) => {
+            if (clause.status && b.status === clause.status) return true;
+            return false;
+          });
+        });
+      }
       const queryObj: any = {
-        sort: vi.fn().mockImplementation(() => ({
-          limit: vi.fn().mockImplementation(() => results.map((b) => ({ ...b, toJSON: () => b }))),
-        })),
+        sort: vi.fn().mockImplementation(() => queryObj),
+        limit: vi.fn().mockImplementation(() => queryObj),
+        lean: vi.fn().mockResolvedValue(results),
+        exec: vi.fn().mockResolvedValue(results.map((b) => ({ ...b, toJSON: () => b }))),
+        then: (resolve: any, reject?: any) =>
+          Promise.resolve(results.map((b) => ({ ...b, toJSON: () => b }))).then(resolve, reject),
       };
       return queryObj;
     });
@@ -698,7 +710,7 @@ describe('StayLocal Host Listing Management & Admin Verification Workflow', () =
       };
       inMemoryStays.set(stay.id, stay);
 
-      // Two pending booking requests for overlapping dates
+      // Two pending booking requests for overlapping dates that together exhaust capacity (4 beds max)
       const booking1 = {
         id: 'bk_concurrent_01',
         bookingReference: 'SLB-CONC01',
@@ -706,6 +718,8 @@ describe('StayLocal Host Listing Management & Admin Verification Workflow', () =
         hostId: hostUser.id,
         touristId: touristUser.id,
         status: 'pending',
+        guestCount: 4,
+        bedsRequired: 4,
         checkIn: new Date(Date.UTC(2026, 11, 15)),
         checkOut: new Date(Date.UTC(2026, 11, 18)),
       };
@@ -716,6 +730,8 @@ describe('StayLocal Host Listing Management & Admin Verification Workflow', () =
         hostId: hostUser.id,
         touristId: touristUser.id,
         status: 'pending',
+        guestCount: 2,
+        bedsRequired: 2,
         checkIn: new Date(Date.UTC(2026, 11, 16)),
         checkOut: new Date(Date.UTC(2026, 11, 19)),
       };
@@ -738,7 +754,7 @@ describe('StayLocal Host Listing Management & Admin Verification Workflow', () =
 
       expect(res2.status).toBe(409);
       expect(res2.body.error.code).toBe('CONFLICT');
-      expect(res2.body.error.message).toMatch(/conflicting dates overlap/i);
+      expect(res2.body.error.message).toMatch(/exceed total bed capacity/i);
     });
   });
 });

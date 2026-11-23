@@ -78,6 +78,7 @@ export interface ResetSummary {
     assignmentHistoryUnaltered: boolean;
     backupIntegrityVerified: boolean;
     targetIdSafetyVerified: boolean;
+    consistentSnapshotVerified: boolean;
     transactionCommitted: boolean;
     matchedCountExact: boolean;
     modifiedCountExact: boolean;
@@ -336,6 +337,36 @@ export async function runResetHostAssignments(options: ResetOptions = {}): Promi
       session.startTransaction();
       console.log('[Transaction] Multi-document ACID transaction active.');
 
+      // Baseline snapshot captured strictly within the consistent transaction session
+      const txBaselineStays = await db
+        .collection<StayAssignmentFields>('stays')
+        .find({}, { session })
+        .sort({ id: 1 })
+        .toArray();
+      const txBaselineUsers = await db
+        .collection<UserRecordFull>('users')
+        .find({}, { session })
+        .sort({ id: 1 })
+        .toArray();
+
+      if (txBaselineStays.length !== 6) {
+        throw new Error(
+          `CRITICAL SAFETY ABORT: Expected exactly 6 homestays in transaction snapshot, found ${txBaselineStays.length}!`
+        );
+      }
+
+      if (JSON.stringify(txBaselineStays) !== JSON.stringify(preStays)) {
+        throw new Error(
+          'CRITICAL SAFETY ABORT: Database stays state changed between pre-execution backup and transaction start!'
+        );
+      }
+
+      if (JSON.stringify(txBaselineUsers) !== JSON.stringify(preUsers)) {
+        throw new Error(
+          'CRITICAL SAFETY ABORT: Database users state changed between pre-execution snapshot and transaction start!'
+        );
+      }
+
       // Safeguard 2: Exact Target-ID Safety Assertion immediately before updateMany()
       console.log('[Safeguard 2] Verifying exact target-ID safety assertion immediately before updateMany()...');
       const matchedStaysToClean = await db
@@ -445,45 +476,45 @@ export async function runResetHostAssignments(options: ResetOptions = {}): Promi
       }
 
       // Assertion: assignmentHistory remains completely unchanged
-      for (const preStay of preStays) {
-        const postStay = postStays.find((s) => s.id === preStay.id);
+      for (const baseStay of txBaselineStays) {
+        const postStay = postStays.find((s) => s.id === baseStay.id);
         if (!postStay) {
-          throw new Error(`CRITICAL POST-CHECK FAILURE: Homestay '${preStay.id}' missing post-execution!`);
+          throw new Error(`CRITICAL POST-CHECK FAILURE: Homestay '${baseStay.id}' missing post-execution!`);
         }
-        const preHistJson = JSON.stringify(preStay.assignmentHistory || []);
+        const baseHistJson = JSON.stringify(baseStay.assignmentHistory || []);
         const postHistJson = JSON.stringify(postStay.assignmentHistory || []);
-        if (preHistJson !== postHistJson) {
-          throw new Error(`CRITICAL POST-CHECK FAILURE: assignmentHistory for '${preStay.id}' was altered!`);
+        if (baseHistJson !== postHistJson) {
+          throw new Error(`CRITICAL POST-CHECK FAILURE: assignmentHistory for '${baseStay.id}' was altered!`);
         }
       }
 
-      // Correction 3: Complete user snapshot comparison verification
-      if (preUsers.length !== postUsers.length) {
+      // Correction 3: Complete user snapshot comparison verification within transaction snapshot
+      if (txBaselineUsers.length !== postUsers.length) {
         throw new Error(
-          `CRITICAL POST-CHECK FAILURE: User count changed from ${preUsers.length} to ${postUsers.length}!`
+          `CRITICAL POST-CHECK FAILURE: User count changed from ${txBaselineUsers.length} to ${postUsers.length}!`
         );
       }
 
       // Full JSON snapshot comparison across all user documents
-      const preUsersJson = JSON.stringify(preUsers);
+      const baseUsersJson = JSON.stringify(txBaselineUsers);
       const postUsersJson = JSON.stringify(postUsers);
-      if (preUsersJson !== postUsersJson) {
+      if (baseUsersJson !== postUsersJson) {
         throw new Error(
           'CRITICAL POST-CHECK FAILURE: User collection was modified! Snapshot comparison mismatch.'
         );
       }
 
       // Explicit primary admin assertion
-      const preAdmin = preUsers.find((u) => u.email === 'ankitd9988@gmail.com' && u.role === 'admin');
+      const baseAdmin = txBaselineUsers.find((u) => u.email === 'ankitd9988@gmail.com' && u.role === 'admin');
       const postAdmin = postUsers.find((u) => u.email === 'ankitd9988@gmail.com' && u.role === 'admin');
-      if (!preAdmin || !postAdmin) {
+      if (!baseAdmin || !postAdmin) {
         throw new Error('CRITICAL POST-CHECK FAILURE: Primary admin account missing!');
       }
       if (
-        preAdmin.id !== postAdmin.id ||
-        preAdmin.password !== postAdmin.password ||
-        preAdmin.role !== postAdmin.role ||
-        preAdmin.status !== postAdmin.status
+        baseAdmin.id !== postAdmin.id ||
+        baseAdmin.password !== postAdmin.password ||
+        baseAdmin.role !== postAdmin.role ||
+        baseAdmin.status !== postAdmin.status
       ) {
         throw new Error(
           'CRITICAL POST-CHECK FAILURE: Primary admin credentials, password hash, role, or ID were altered!'
@@ -491,15 +522,15 @@ export async function runResetHostAssignments(options: ResetOptions = {}): Promi
       }
 
       // Explicit host account assertions
-      const preHosts = preUsers.filter((u) => u.role === 'host');
+      const baseHosts = txBaselineUsers.filter((u) => u.role === 'host');
       const postHosts = postUsers.filter((u) => u.role === 'host');
-      if (preHosts.length !== postHosts.length) {
+      if (baseHosts.length !== postHosts.length) {
         throw new Error('CRITICAL POST-CHECK FAILURE: Host account count changed!');
       }
-      for (const preHost of preHosts) {
-        const postHost = postHosts.find((ph) => ph.id === preHost.id);
-        if (!postHost || postHost.password !== preHost.password || postHost.email !== preHost.email) {
-          throw new Error(`CRITICAL POST-CHECK FAILURE: Host account '${preHost.email}' was modified!`);
+      for (const baseHost of baseHosts) {
+        const postHost = postHosts.find((ph) => ph.id === baseHost.id);
+        if (!postHost || postHost.password !== baseHost.password || postHost.email !== baseHost.email) {
+          throw new Error(`CRITICAL POST-CHECK FAILURE: Host account '${baseHost.email}' was modified!`);
         }
       }
 
@@ -517,6 +548,7 @@ export async function runResetHostAssignments(options: ResetOptions = {}): Promi
         assignmentHistoryUnaltered: true,
         backupIntegrityVerified: true,
         targetIdSafetyVerified: true,
+        consistentSnapshotVerified: true,
         transactionCommitted: true,
         matchedCountExact: updateResult.matchedCount === 3,
         modifiedCountExact: updateResult.modifiedCount === 3,
@@ -623,16 +655,19 @@ if (process.argv[1]?.includes('reset-host-assignments')) {
           `Assertion 7 (Backup):     Backup read back & validated: ${summary.postVerification.backupIntegrityVerified ? '✅ PASS' : '❌ FAIL'}`
         );
         console.log(
-          `Assertion 8 (Tx Commit):  All assertions verified inside transaction before commit: ${summary.postVerification.transactionCommitted ? '✅ PASS' : '❌ FAIL'}`
+          `Assertion 8 (Snapshot):   Consistent transaction session snapshot verified: ${summary.postVerification.consistentSnapshotVerified ? '✅ PASS' : '❌ FAIL'}`
         );
         console.log(
-          `Assertion 9 (Users):      All user documents byte-identical: ${summary.postVerification.userDocumentsIdentical ? '✅ PASS' : '❌ FAIL'}`
+          `Assertion 9 (Tx Commit):  All assertions verified inside transaction before commit: ${summary.postVerification.transactionCommitted ? '✅ PASS' : '❌ FAIL'}`
         );
         console.log(
-          `Assertion 10 (Admin):     Admin password hash & role intact: ${summary.postVerification.adminPasswordHashIntact ? '✅ PASS' : '❌ FAIL'}`
+          `Assertion 10 (Users):     All user documents byte-identical: ${summary.postVerification.userDocumentsIdentical ? '✅ PASS' : '❌ FAIL'}`
         );
         console.log(
-          `Assertion 11 (Hosts):     Host accounts intact: ${summary.postVerification.hostAccountsIntact ? '✅ PASS' : '❌ FAIL'}`
+          `Assertion 11 (Admin):     Admin password hash & role intact: ${summary.postVerification.adminPasswordHashIntact ? '✅ PASS' : '❌ FAIL'}`
+        );
+        console.log(
+          `Assertion 12 (Hosts):     Host accounts intact: ${summary.postVerification.hostAccountsIntact ? '✅ PASS' : '❌ FAIL'}`
         );
       }
 

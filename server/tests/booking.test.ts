@@ -204,18 +204,23 @@ describe('StayLocal Booking Management, Availability & RBAC Tests', () => {
       if (query?.touristId) {
         list = list.filter((b) => b.touristId === query.touristId);
       }
+      if (query?.stayId) {
+        const sId = typeof query.stayId === 'string' ? query.stayId.toLowerCase() : query.stayId;
+        list = list.filter((b) => b.stayId?.toLowerCase() === sId);
+      }
       if (query?.$or) {
         list = list.filter((b) => {
           return query.$or.some((clause: any) => {
             if (clause.hostId && b.hostId === clause.hostId) return true;
             if (clause.stayId && clause.stayId.$in && clause.stayId.$in.includes(b.stayId)) return true;
+            if (clause.status && b.status === clause.status) return true;
             return false;
           });
         });
       }
 
-      const sortMock = {
-        sort: () => list.map((item) => ({
+      const mapItems = (items: any[]) =>
+        items.map((item) => ({
           ...item,
           toJSON() {
             const res = { ...item };
@@ -229,10 +234,17 @@ describe('StayLocal Booking Management, Availability & RBAC Tests', () => {
             }
             return res;
           },
-        })),
+        }));
+
+      const queryObj: any = {
+        sort: () => queryObj,
+        limit: () => queryObj,
+        lean: async () => list,
+        exec: async () => mapItems(list),
+        then: (resolve: any, reject?: any) => Promise.resolve(mapItems(list)).then(resolve, reject),
       };
 
-      return sortMock as any;
+      return queryObj;
     });
 
     // Mock BookingModel.findOneAndUpdate
@@ -420,7 +432,7 @@ describe('StayLocal Booking Management, Availability & RBAC Tests', () => {
 
   describe('4. Double Booking Prevention & Concurrency Overlap Check', () => {
     it('blocks new booking request if dates overlap with a confirmed reservation (409 Conflict)', async () => {
-      // 1. Manually add an existing confirmed reservation
+      // 1. Manually add an existing confirmed reservation that exhausts all 4 beds
       const existingConfirmed = {
         id: 'bk_confirmed_001',
         bookingReference: 'SLB-CONF01',
@@ -429,7 +441,8 @@ describe('StayLocal Booking Management, Availability & RBAC Tests', () => {
         status: 'confirmed',
         checkIn: new Date(Date.UTC(2026, 10, 15)), // Nov 15
         checkOut: new Date(Date.UTC(2026, 10, 18)), // Nov 18
-        guestCount: 2,
+        guestCount: 4,
+        bedsRequired: 4,
         pricing: {
           nights: 3,
           pricePerNight: 2000,
@@ -455,7 +468,7 @@ describe('StayLocal Booking Management, Availability & RBAC Tests', () => {
 
       expect(res.status).toBe(409);
       expect(res.body.error.code).toBe('CONFLICT');
-      expect(res.body.error.message).toMatch(/overlap with an existing confirmed reservation/i);
+      expect(res.body.error.message).toMatch(/bed\(s\).*available|exceed.*capacity/i);
     });
 
     it('allows contiguous adjacent bookings where checkout date equals next checkin date', async () => {
@@ -578,6 +591,8 @@ describe('StayLocal Booking Management, Availability & RBAC Tests', () => {
         status: 'confirmed',
         checkIn: new Date(Date.UTC(2026, 11, 2)),
         checkOut: new Date(Date.UTC(2026, 11, 5)),
+        guestCount: 4,
+        bedsRequired: 4,
         toJSON() { return this; },
       };
       inMemoryBookings.set(confirmedBooking.id, confirmedBooking);
@@ -590,6 +605,8 @@ describe('StayLocal Booking Management, Availability & RBAC Tests', () => {
         status: 'pending',
         checkIn: new Date(Date.UTC(2026, 11, 1)),
         checkOut: new Date(Date.UTC(2026, 11, 4)),
+        guestCount: 2,
+        bedsRequired: 2,
         toJSON() { return this; },
       };
       inMemoryBookings.set(pendingBooking.id, pendingBooking);
@@ -600,7 +617,7 @@ describe('StayLocal Booking Management, Availability & RBAC Tests', () => {
 
       expect(res.status).toBe(409);
       expect(res.body.error.code).toBe('CONFLICT');
-      expect(res.body.error.message).toMatch(/conflicting dates overlap/i);
+      expect(res.body.error.message).toMatch(/exceed total bed capacity/i);
     });
 
     it('PATCH /api/host/bookings/:id/confirm forbids a host who does not own the stay with 403 Forbidden', async () => {

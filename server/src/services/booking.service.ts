@@ -387,7 +387,8 @@ export class BookingService {
         booking.checkIn,
         booking.checkOut,
         cleaningBufferMinutes,
-        booking.id // exclude this booking itself from occupied count
+        booking.id, // exclude this booking itself from occupied count
+        false // when confirming, only already-confirmed bookings occupy capacity
       );
 
       const required = booking.bedsRequired || booking.guestCount || 1;

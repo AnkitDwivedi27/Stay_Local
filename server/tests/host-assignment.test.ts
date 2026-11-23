@@ -254,21 +254,23 @@ describe('StayLocal Host Assignment System for Preloaded Homestays', () => {
         bookings = bookings.filter((b) => b.hostId === query.hostId);
       }
       if (query?.stayId) {
-        bookings = bookings.filter((b) => b.stayId === query.stayId);
+        const sId = typeof query.stayId === 'string' ? query.stayId.toLowerCase() : query.stayId;
+        bookings = bookings.filter((b) => b.stayId?.toLowerCase() === sId);
       }
       if (query?.$or) {
         bookings = bookings.filter((b) =>
-          query.$or.some((c: any) => c.hostId === b.hostId || (c.stayId?.$in && c.stayId.$in.includes(b.stayId)))
+          query.$or.some((c: any) => c.hostId === b.hostId || (c.stayId?.$in && c.stayId.$in.includes(b.stayId)) || (c.status && c.status === b.status))
         );
       }
       const docList = bookings.map(createMockBookingDoc);
-      return {
-        sort: () => ({
-          limit: () => docList,
-          then: (resolve: any) => resolve(docList),
-        }),
-        then: (resolve: any) => resolve(docList),
-      } as any;
+      const queryObj: any = {
+        sort: () => queryObj,
+        limit: () => queryObj,
+        lean: async () => bookings,
+        exec: async () => docList,
+        then: (resolve: any, reject?: any) => Promise.resolve(docList).then(resolve, reject),
+      };
+      return queryObj;
     });
 
     vi.spyOn(BookingModel, 'findOne').mockImplementation((query: any) => {

@@ -97,6 +97,10 @@ describe('StayLocal Guide Discovery & Booking System', () => {
     return doc;
   }
 
+  // Dynamic future dates to prevent test degradation over time
+  const testBookingDate = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+  const testBookingDateNext = new Date(Date.now() + 15 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+
   function seedVerifiedGuideAndExperience() {
     const profile = {
       id: 'gprof_101',
@@ -133,8 +137,8 @@ describe('StayLocal Guide Discovery & Booking System', () => {
       maxGroupSize: 8,
       status: 'published',
       availableSlots: [
-        { date: '2026-11-15', timeSlots: ['07:00 AM'] },
-        { date: '2026-11-16', timeSlots: ['07:00 AM'] },
+        { date: testBookingDate, timeSlots: ['07:00 AM'] },
+        { date: testBookingDateNext, timeSlots: ['07:00 AM'] },
       ],
     };
     inMemoryExperiences.set(experience.id, experience);
@@ -507,8 +511,8 @@ describe('StayLocal Guide Discovery & Booking System', () => {
         maxGroupSize: 8,
         requirements: 'Sturdy hiking shoes, warm windproof jacket',
         availableSlots: [
-          { date: '2026-11-15', timeSlots: ['07:00 AM'] },
-          { date: '2026-11-16', timeSlots: ['07:00 AM'] },
+          { date: testBookingDate, timeSlots: ['07:00 AM'] },
+          { date: testBookingDateNext, timeSlots: ['07:00 AM'] },
         ],
       };
 
@@ -682,7 +686,7 @@ describe('StayLocal Guide Discovery & Booking System', () => {
 
       const bookingPayload = {
         experienceId: experience.id,
-        bookingDate: '2026-11-15',
+        bookingDate: testBookingDate,
         timeSlot: '07:00 AM',
         participantCount: 3,
         specialRequests: 'Vegetarian meals preferred.',
@@ -706,7 +710,7 @@ describe('StayLocal Guide Discovery & Booking System', () => {
 
       const bookingPayload = {
         experienceId: experience.id,
-        bookingDate: '2026-11-15',
+        bookingDate: testBookingDate,
         timeSlot: '07:00 AM',
         participantCount: 1,
       };
@@ -728,7 +732,7 @@ describe('StayLocal Guide Discovery & Booking System', () => {
       const existingBooking = {
         id: 'gbk_existing_1',
         experienceId: experience.id,
-        bookingDate: '2026-11-15',
+        bookingDate: testBookingDate,
         timeSlot: '07:00 AM',
         participantCount: 5,
         status: 'confirmed',
@@ -738,7 +742,7 @@ describe('StayLocal Guide Discovery & Booking System', () => {
       // Max group size is 8. Trying to book 4 spots exceeds limit (5 + 4 = 9 > 8)
       const overbookPayload = {
         experienceId: experience.id,
-        bookingDate: '2026-11-15',
+        bookingDate: testBookingDate,
         timeSlot: '07:00 AM',
         participantCount: 4,
       };
@@ -760,7 +764,7 @@ describe('StayLocal Guide Discovery & Booking System', () => {
       const existingBooking = {
         id: 'gbk_existing_2',
         experienceId: experience.id,
-        bookingDate: '2026-11-15',
+        bookingDate: testBookingDate,
         timeSlot: '07:00 AM',
         participantCount: 3,
         status: 'confirmed',
@@ -770,7 +774,7 @@ describe('StayLocal Guide Discovery & Booking System', () => {
       // 3 booked, 5 remaining spots. Booking 5 spots should succeed.
       const exactPayload = {
         experienceId: experience.id,
-        bookingDate: '2026-11-15',
+        bookingDate: testBookingDate,
         timeSlot: '07:00 AM',
         participantCount: 5,
       };
@@ -793,7 +797,7 @@ describe('StayLocal Guide Discovery & Booking System', () => {
         guideId: guideUser.id,
         touristId: touristUser.id,
         experienceId: experience.id,
-        bookingDate: '2026-11-15',
+        bookingDate: testBookingDate,
         timeSlot: '07:00 AM',
         participantCount: 2,
         status: 'pending',
@@ -818,7 +822,7 @@ describe('StayLocal Guide Discovery & Booking System', () => {
         guideId: guideUser.id,
         touristId: touristUser.id,
         experienceId: experience.id,
-        bookingDate: '2026-11-15',
+        bookingDate: testBookingDate,
         timeSlot: '07:00 AM',
         participantCount: 2,
         status: 'pending',
@@ -844,7 +848,7 @@ describe('StayLocal Guide Discovery & Booking System', () => {
         guideName: guideUser.fullName,
         touristId: touristUser.id,
         experienceId: experience.id,
-        bookingDate: '2026-11-15',
+        bookingDate: testBookingDate,
         timeSlot: '07:00 AM',
         participantCount: 2,
         status: 'confirmed',
@@ -869,7 +873,7 @@ describe('StayLocal Guide Discovery & Booking System', () => {
         guideId: guideUser.id,
         touristId: touristUser.id,
         experienceId: experience.id,
-        bookingDate: '2026-11-15',
+        bookingDate: testBookingDate,
         timeSlot: '07:00 AM',
         participantCount: 2,
         status: 'confirmed',
